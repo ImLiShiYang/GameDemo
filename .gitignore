@@ -1,0 +1,12 @@
+# This repository intentionally publishes only the portfolio demo folder.
+/*
+
+# Keep this allow-list file.
+!/.gitignore
+
+# Keep only Assets/Demo and its Unity metadata.
+!/Assets/
+/Assets/*
+!/Assets/Demo.meta
+!/Assets/Demo/
+!/Assets/Demo/**
