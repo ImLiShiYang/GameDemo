@@ -12,9 +12,7 @@ public class WeaponLeftHandIK : MonoBehaviour
 
     [Range(0f, 1f)]
     [FormerlySerializedAs("leftHandRotationWeight")]
-    [SerializeField] private float rotationWeight = 0f;
-
-    private bool hasLoggedIkEvaluation;
+    [SerializeField] private float rotationWeight;
 
     private void Reset()
     {
@@ -23,39 +21,12 @@ public class WeaponLeftHandIK : MonoBehaviour
 
     private void OnAnimatorIK(int layerIndex)
     {
-        if (!hasLoggedIkEvaluation)
-        {
-            hasLoggedIkEvaluation = true;
-            Debug.Log(
-                $"WeaponLeftHandIK evaluated. Layer={layerIndex}, " +
-                $"AnimatorAssigned={animator != null}, " +
-                $"GripAssigned={leftHandGrip != null}, " +
-                $"PositionWeight={positionWeight}",
-                this
-            );
-        }
-
         if (animator == null || leftHandGrip == null)
             return;
 
-        animator.SetIKPositionWeight(
-            AvatarIKGoal.LeftHand,
-            positionWeight
-        );
-
-        animator.SetIKRotationWeight(
-            AvatarIKGoal.LeftHand,
-            rotationWeight
-        );
-
-        animator.SetIKPosition(
-            AvatarIKGoal.LeftHand,
-            leftHandGrip.position
-        );
-
-        animator.SetIKRotation(
-            AvatarIKGoal.LeftHand,
-            leftHandGrip.rotation
-        );
+        animator.SetIKPositionWeight(AvatarIKGoal.LeftHand, positionWeight);
+        animator.SetIKRotationWeight(AvatarIKGoal.LeftHand, rotationWeight);
+        animator.SetIKPosition(AvatarIKGoal.LeftHand, leftHandGrip.position);
+        animator.SetIKRotation(AvatarIKGoal.LeftHand, leftHandGrip.rotation);
     }
 }
