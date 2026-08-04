@@ -75,28 +75,40 @@ public class Projectile : MonoBehaviour
         }
 
         // 忽略发射子弹的玩家及其所有子物体。
-        if (owner != null &&
-            other.transform.root == owner.transform.root)
+        if (owner != null &&other.transform.root == owner.transform.root)
         {
             return;
         }
 
         // 从碰撞物体或其父物体上寻找伤害接口。
-        IDamageable damageable =
-            other.GetComponentInParent<IDamageable>();
-
+        IDamageable damageable =other.GetComponentInParent<IDamageable>();
+            
         if (damageable != null && !damageable.IsDead)
         {
             hasHit = true;
 
-            Vector3 hitPoint =
-                other.ClosestPoint(transform.position);
+            Vector3 hitPoint =other.ClosestPoint(transform.position);
+
+            // 从目标表面命中点指向子弹中心，近似作为表面法线。
+            Vector3 hitNormal =transform.position - hitPoint;
+
+            // 子弹中心进入 Collider 内部时，ClosestPoint 可能返回子弹自身位置，
+            // 此时改用子弹飞行方向的反方向作为备用法线。
+            if (hitNormal.sqrMagnitude < 0.0001f)
+            {
+                hitNormal = -moveDirection;
+            }
+            else
+            {
+                hitNormal.Normalize();
+            }
 
             DamageInfo damageInfo = new DamageInfo(
                 damage,
                 owner,
                 hitPoint,
-                moveDirection);
+                moveDirection,
+                hitNormal);
 
             damageable.TakeDamage(damageInfo);
 

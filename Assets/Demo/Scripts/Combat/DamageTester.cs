@@ -62,7 +62,8 @@ public class DamageTester : MonoBehaviour
             testDamage,
             gameObject,
             targetHealth.transform.position,
-            targetHealth.transform.forward);
+            targetHealth.transform.forward,
+            -targetHealth.transform.forward);
 
         // 故意使用接口类型调用，用来验证 IDamageable。
         IDamageable damageable = targetHealth;

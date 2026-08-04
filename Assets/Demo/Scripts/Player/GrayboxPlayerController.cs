@@ -63,7 +63,6 @@ public class GrayboxPlayerController : MonoBehaviour
 
     [Header("Aim Line")]
     [SerializeField] private bool showAimLine = true;
-    [SerializeField] private bool onlyShowAimLineWhileFiring = true;
     [SerializeField] private Color aimLineColor = new Color(0f, 1f, 0.8f, 1f);
     [SerializeField] private float aimLineWidth = 0.04f;
 
@@ -1013,7 +1012,6 @@ public class GrayboxPlayerController : MonoBehaviour
         bool shouldShow =
             !isRolling &&
             showAimLine &&
-            (!onlyShowAimLineWhileFiring || isFiring) &&
             muzzle != null &&
             HasAimPoint;
 

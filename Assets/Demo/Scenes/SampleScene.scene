@@ -124,6 +124,153 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &32335896
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 7
+  m_Component:
+  - component: {fileID: 32335902}
+  - component: {fileID: 32335901}
+  - component: {fileID: 32335900}
+  - component: {fileID: 32335899}
+  - component: {fileID: 32335898}
+  - component: {fileID: 32335897}
+  m_Layer: 0
+  m_HasEditorInfo: 1
+  m_Name: Cube
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &32335897
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32335896}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1458ed0a8cd600846ae5013c45bf38c0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  targetRenderers: []
+  damageNumberPrefab: {fileID: 1183786549162967186, guid: 1caef1c1937695e409f4303c56e16efb,
+    type: 3}
+  hitEffectPrefab: {fileID: 4525881305580278858, guid: 1c6599c7bf3fb084caae35190e629714,
+    type: 3}
+  damageNumberSurfaceOffset: 0.25
+  damageNumberUpOffset: 0.15
+  hitEffectLifeTime: 1
+  colorPropertyName: _BaseColor
+  flashColor: {r: 1, g: 1, b: 1, a: 1}
+  flashDuration: 0.08
+--- !u!114 &32335898
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32335896}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: db851c7513bbf4b4e842ccf58d20ba5b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  maxHealth: 10000
+--- !u!65 &32335899
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32335896}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 1, y: 1, z: 1}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!23 &32335900
+MeshRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32335896}
+  m_Enabled: 1
+  m_CastShadows: 1
+  m_ReceiveShadows: 1
+  m_DynamicOccludee: 1
+  m_StaticShadowCaster: 0
+  m_MotionVectors: 1
+  m_LightProbeUsage: 1
+  m_ReflectionProbeUsage: 1
+  m_RayTracingMode: 2
+  m_RayTraceProcedural: 0
+  m_virtualGeometry: 0
+  m_ShadingRate: 0
+  m_ForceDisableGRD: 0
+  m_RenderingLayerMask: 1
+  m_RendererPriority: 0
+  m_Materials:
+  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  m_StaticBatchInfo:
+    firstSubMesh: 0
+    subMeshCount: 0
+  m_StaticBatchRoot: {fileID: 0}
+  m_ProbeAnchor: {fileID: 0}
+  m_LightProbeVolumeOverride: {fileID: 0}
+  m_ScaleInLightmap: 1
+  m_ReceiveGI: 1
+  m_PreserveUVs: 0
+  m_IgnoreNormalsForChartDetection: 0
+  m_ImportantGI: 0
+  m_StitchLightmapSeams: 1
+  m_SelectedEditorRenderState: 3
+  m_MinimumChartSize: 4
+  m_AutoUVMaxDistance: 0.5
+  m_AutoUVMaxAngle: 89
+  m_LightmapParameters: {fileID: 0}
+  m_SortingLayerID: 0
+  m_SortingLayer: 0
+  m_SortingOrder: 0
+  m_AdditionalVertexStreams: {fileID: 0}
+--- !u!33 &32335901
+MeshFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32335896}
+  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!4 &32335902
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32335896}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 40.68039, y: 1.49, z: 23.601042}
+  m_LocalScale: {x: 2, y: 2, z: 2}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &68381083
 GameObject:
   m_ObjectHideFlags: 0
@@ -1553,7 +1700,7 @@ MonoBehaviour:
   aimCamera: {fileID: 330585545}
   aimHitMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 1
   aimRayDistance: 500
   aimRayStartOffset: 0.05
   aimTurnSpeed: 1080
@@ -1564,14 +1711,13 @@ MonoBehaviour:
   weaponAimEnd: {fileID: 2026337681}
   weaponAimPivot: {fileID: 1732993409}
   showAimLine: 1
-  onlyShowAimLineWhileFiring: 1
   aimLineColor: {r: 0, g: 1, b: 0.8, a: 1}
   aimLineWidth: 0.04
   cameraTransform: {fileID: 330585546}
   animator: {fileID: 1250490645}
   playerAttack: {fileID: 923819008}
   rollKey: 32
-  rollCooldown: 0.35
+  rollCooldown: 0.01
   rollInputThreshold: 0.05
   rollTriggerName: Roll
   postRollAimTurnSpeed: 720
@@ -1664,6 +1810,7 @@ GameObject:
   - component: {fileID: 930414276}
   - component: {fileID: 930414275}
   - component: {fileID: 930414274}
+  - component: {fileID: 930414279}
   m_Layer: 0
   m_HasEditorInfo: 1
   m_Name: Capsule
@@ -1684,7 +1831,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db851c7513bbf4b4e842ccf58d20ba5b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  maxHealth: 30
+  maxHealth: 10000
 --- !u!136 &930414275
 CapsuleCollider:
   m_ObjectHideFlags: 0
@@ -1776,6 +1923,29 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &930414279
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 930414273}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1458ed0a8cd600846ae5013c45bf38c0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  targetRenderers: []
+  damageNumberPrefab: {fileID: 1183786549162967186, guid: 1caef1c1937695e409f4303c56e16efb,
+    type: 3}
+  hitEffectPrefab: {fileID: 4525881305580278858, guid: 1c6599c7bf3fb084caae35190e629714,
+    type: 3}
+  damageNumberSurfaceOffset: 0.25
+  damageNumberUpOffset: 0.15
+  hitEffectLifeTime: 1
+  colorPropertyName: _BaseColor
+  flashColor: {r: 1, g: 1, b: 1, a: 1}
+  flashDuration: 0.08
 --- !u!1 &931005602
 GameObject:
   m_ObjectHideFlags: 0
@@ -3251,3 +3421,4 @@ SceneRoots:
   - {fileID: 923819006}
   - {fileID: 68381084}
   - {fileID: 930414278}
+  - {fileID: 32335902}
