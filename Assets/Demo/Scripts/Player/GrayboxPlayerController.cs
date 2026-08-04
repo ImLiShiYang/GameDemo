@@ -119,6 +119,16 @@ public class GrayboxPlayerController : MonoBehaviour
     /// 命中物体时是碰撞点；未命中时是枪口前方远点。
     /// </summary>
     public Vector3 AimPoint { get; private set; }
+    
+    /// <summary>
+    /// 鼠标射线与枪口高度水平面的世界空间交点。
+    /// </summary>
+    public Vector3 MouseAimWorldPoint { get; private set; }
+
+    /// <summary>
+    /// 当前是否成功获得鼠标水平面交点。
+    /// </summary>
+    public bool HasMouseAimWorldPoint { get; private set; }
 
     /// <summary>
     /// 当前是否拥有有效瞄准点。
@@ -627,6 +637,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
         if (aimCamera == null)
         {
+            HasMouseAimWorldPoint = false;
             return false;
         }
 
@@ -651,6 +662,9 @@ public class GrayboxPlayerController : MonoBehaviour
         if (aimDirectionPlane.Raycast(mouseRay, out float enter))
         {
             Vector3 mousePointAtWeaponHeight = mouseRay.GetPoint(enter);
+            
+            MouseAimWorldPoint = mousePointAtWeaponHeight;
+            HasMouseAimWorldPoint = true;
 
             // Base the dead zone on the stable character pivot, not the rotating muzzle.
             // Once entered, use a larger exit radius to prevent boundary oscillation.
@@ -687,6 +701,7 @@ public class GrayboxPlayerController : MonoBehaviour
         else
         {
             isMouseAimInsideDeadZone = false;
+            HasMouseAimWorldPoint = false;
 
             // 极端情况下相机射线与水平面平行，使用相机射线的水平投影。
             direction = mouseRay.direction;
