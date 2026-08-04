@@ -41,6 +41,12 @@ public class GrayboxPlayerController : MonoBehaviour
     [Tooltip("枪方向参考点缺失时，角色根节点朝向鼠标的旋转速度。")]
     [SerializeField] private float aimTurnSpeed = 1080f;
 
+    [Tooltip("Keep the last stable aim direction while the mouse is within this horizontal radius of the character center.")]
+    [SerializeField, Min(0f)] private float mouseAimDeadZoneRadius = 0.35f;
+
+    [Tooltip("Extra distance the mouse must leave after entering the dead zone, preventing boundary jitter.")]
+    [SerializeField, Min(0f)] private float mouseAimDeadZoneHysteresis = 0.15f;
+
     [Header("Weapon Aim")]
     [Tooltip("枪口位置，同时作为物理射线和瞄准线的起点。")]
     [SerializeField] private Transform muzzle;
@@ -51,28 +57,40 @@ public class GrayboxPlayerController : MonoBehaviour
     [Tooltip("枪口前方参考点。Start 指向 End 的方向必须沿着子弹发射方向。")]
     [SerializeField] private Transform weaponAimEnd;
 
+
+    [Tooltip("Transform rotated after animation so the real barrel direction stays aligned with the mouse.")]
+    [SerializeField] private Transform weaponAimPivot;
+
     [Header("Aim Line")]
     [SerializeField] private bool showAimLine = true;
     [SerializeField] private bool onlyShowAimLineWhileFiring = true;
     [SerializeField] private Color aimLineColor = new Color(0f, 1f, 0.8f, 1f);
     [SerializeField] private float aimLineWidth = 0.04f;
-    [SerializeField] private float aimLineEndHeight = 0.03f;
 
     [Header("References")]
     [SerializeField] private Transform cameraTransform;
     [SerializeField] private Animator animator;
-    
+
     [Header("Dodge Roll")]
     [SerializeField] private KeyCode rollKey = KeyCode.LeftShift;
-
     [Tooltip("两次翻滚之间的最短间隔。")]
     [SerializeField] private float rollCooldown = 0.35f;
-
     [Tooltip("小于这个输入强度时，认为角色没有移动输入。")]
     [SerializeField] private float rollInputThreshold = 0.05f;
-
     [Tooltip("Animator 中翻滚 Trigger 参数的名字。")]
     [SerializeField] private string rollTriggerName = "Roll";
+    [Tooltip("翻滚结束后，角色重新朝向鼠标时的旋转速度，单位为度/秒。")]
+    [SerializeField] private float postRollAimTurnSpeed = 540f;
+    [Tooltip("与鼠标方向小于这个角度时，认为转向恢复完成。")]
+    [SerializeField] private float postRollAimFinishAngle = 1f;
+    
+    [Header("Roll Invincibility")]
+    [Tooltip("当前是否处于翻滚无敌帧。由翻滚动画事件控制。")]
+    [SerializeField] private bool isInvincible;
+
+    public bool IsInvincible => isInvincible;
+
+    private bool isRecoveringAimAfterRoll;
 
     private Vector3 moveInputDirection;
     private bool isRolling;
@@ -94,6 +112,7 @@ public class GrayboxPlayerController : MonoBehaviour
     private bool isFiring;
     private Vector3 lastAimDirection;
     private bool hasLastAimDirection;
+    private bool isMouseAimInsideDeadZone;
 
     /// <summary>
     /// 枪口射线最终指向的世界坐标。
@@ -133,7 +152,12 @@ public class GrayboxPlayerController : MonoBehaviour
         {
             cameraTransform = aimCamera.transform;
         }
-        
+
+        if (weaponAimPivot == null)
+        {
+            weaponAimPivot = ResolveWeaponAimPivot();
+        }
+
         rollTriggerHash = Animator.StringToHash(rollTriggerName);
 
         CreateAimLine();
@@ -141,7 +165,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private void Update()
     {
-        // 每帧都读取移动输入，确保按下 Shift 的这一帧能获得正确方向。
+        // 每帧都读取移动输入，确保按下 space 的这一帧能获得正确方向。
         UpdateMoveInput();
 
         // 翻滚时不允许开枪。
@@ -163,7 +187,7 @@ public class GrayboxPlayerController : MonoBehaviour
         UpdateMovement();
         UpdateLocomotionAnimator();
     }
-    
+
     private void UpdateMoveInput()
     {
         float horizontal = Input.GetAxisRaw("Horizontal");
@@ -199,7 +223,7 @@ public class GrayboxPlayerController : MonoBehaviour
             1f
         );
     }
-    
+
     /// <summary>
     /// 立即清空移动 Blend Tree 参数。
     /// 翻滚期间防止走路动画继续和翻滚动画混合。
@@ -224,7 +248,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
         UpdateAimLine();
     }
-    
+
     private void TryStartRoll()
     {
         if (animator == null)
@@ -284,6 +308,11 @@ public class GrayboxPlayerController : MonoBehaviour
         rollVerticalVelocity = -2f;
 
         isRolling = true;
+        
+        // 翻滚刚开始时还未进入无敌帧。
+        // 真正的无敌时间由动画事件开启。
+        isInvincible = false;
+        
         nextRollAllowedTime = Time.time + rollCooldown;
 
         animator.ResetTrigger(rollTriggerHash);
@@ -399,17 +428,152 @@ public class GrayboxPlayerController : MonoBehaviour
 
         if (weaponAimStart != null && weaponAimEnd != null)
         {
-            // 使用枪上两个点形成的真实方向，校正整个角色的 Y 轴旋转。
-            AlignWeaponToDirection(desiredAimDirection);
+            if (isRecoveringAimAfterRoll)
+            {
+                bool aimAligned = AlignWeaponToDirectionSmooth(
+                    desiredAimDirection,
+                    postRollAimTurnSpeed
+                );
+
+                if (aimAligned)
+                {
+                    isRecoveringAimAfterRoll = false;
+                }
+            }
+            else
+            {
+                // 平常仍然使用你原本的精确枪械对齐逻辑。
+                AlignWeaponToDirection(desiredAimDirection);
+            }
         }
         else
         {
-            // 枪方向参考点未配置时，退回使用角色自身 forward。
-            RotateCharacterTowards(desiredAimDirection, aimTurnSpeed);
+            if (isRecoveringAimAfterRoll)
+            {
+                bool aimAligned = RotateCharacterTowardsSmooth(
+                    desiredAimDirection,
+                    postRollAimTurnSpeed
+                );
+
+                if (aimAligned)
+                {
+                    isRecoveringAimAfterRoll = false;
+                }
+            }
+            else
+            {
+                RotateCharacterTowards(
+                    desiredAimDirection,
+                    aimTurnSpeed
+                );
+            }
         }
 
         // 角色旋转完成后，再从最新枪口位置发射射线。
+        CompensateWeaponAnimationPitch();
         UpdateAimPointFromWeaponRay(desiredAimDirection);
+    }
+
+    /// <summary>
+    /// 当没有配置枪械方向参考点时，平滑旋转角色自身 forward。
+    /// </summary>
+    private bool RotateCharacterTowardsSmooth(
+        Vector3 direction,
+        float rotationSpeed)
+    {
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude < 0.0001f)
+        {
+            return true;
+        }
+
+        Quaternion targetRotation = Quaternion.LookRotation(
+            direction.normalized,
+            Vector3.up
+        );
+
+        float remainingAngle = Quaternion.Angle(
+            transform.rotation,
+            targetRotation
+        );
+
+        if (remainingAngle <= postRollAimFinishAngle)
+        {
+            transform.rotation = targetRotation;
+            return true;
+        }
+
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation,
+            targetRotation,
+            rotationSpeed * Time.deltaTime
+        );
+
+        return false;
+    }
+
+    /// <summary>
+    /// 根据枪当前的真实方向，逐渐旋转整个角色朝向目标方向。
+    /// 返回 true 表示已经基本完成对齐。
+    /// </summary>
+    private bool AlignWeaponToDirectionSmooth(
+        Vector3 desiredAimDirection,
+        float rotationSpeed)
+    {
+        desiredAimDirection.y = 0f;
+
+        if (desiredAimDirection.sqrMagnitude < 0.0001f)
+        {
+            return true;
+        }
+
+        desiredAimDirection.Normalize();
+
+        Vector3 currentWeaponDirection =
+            weaponAimEnd.position -
+            weaponAimStart.position;
+
+        currentWeaponDirection.y = 0f;
+
+        if (currentWeaponDirection.sqrMagnitude < 0.0001f)
+        {
+            return true;
+        }
+
+        currentWeaponDirection.Normalize();
+
+        // 计算枪方向和鼠标方向的夹角
+        float angleDifference = Vector3.SignedAngle(
+            currentWeaponDirection,
+            desiredAimDirection,
+            Vector3.up
+        );
+
+        if (Mathf.Abs(angleDifference) <= postRollAimFinishAngle)
+        {
+            return true;
+        }
+
+        // 本帧最多允许旋转的角度。
+        float maxRotationThisFrame =
+            rotationSpeed * Time.deltaTime;
+
+        float appliedAngle = Mathf.Clamp(
+            angleDifference,
+            -maxRotationThisFrame,
+            maxRotationThisFrame
+        );
+
+        transform.rotation =
+            Quaternion.AngleAxis(appliedAngle, Vector3.up) *
+            transform.rotation;
+
+        float remainingAngle =
+            Mathf.Abs(angleDifference) -
+            Mathf.Abs(appliedAngle);
+
+        return remainingAngle <= postRollAimFinishAngle;
     }
 
     /// <summary>
@@ -448,11 +612,43 @@ public class GrayboxPlayerController : MonoBehaviour
         if (aimDirectionPlane.Raycast(mouseRay, out float enter))
         {
             Vector3 mousePointAtWeaponHeight = mouseRay.GetPoint(enter);
+
+            // Base the dead zone on the stable character pivot, not the rotating muzzle.
+            // Once entered, use a larger exit radius to prevent boundary oscillation.
+            Vector3 mouseOffsetFromCharacter =mousePointAtWeaponHeight - transform.position;
+
+            mouseOffsetFromCharacter.y = 0f;
+
+            float deadZoneRadius = Mathf.Max(0f, mouseAimDeadZoneRadius);
+            float deadZoneExitRadius =
+                deadZoneRadius +
+                Mathf.Max(0f, mouseAimDeadZoneHysteresis);
+            float activeDeadZoneRadius = isMouseAimInsideDeadZone
+                ? deadZoneExitRadius
+                : deadZoneRadius;
+
+            if (mouseOffsetFromCharacter.sqrMagnitude <=
+                activeDeadZoneRadius * activeDeadZoneRadius)
+            {
+                isMouseAimInsideDeadZone = true;
+
+                if (!hasLastAimDirection)
+                {
+                    return false;
+                }
+
+                direction = lastAimDirection;
+                return true;
+            }
+
+            isMouseAimInsideDeadZone = false;
             direction = mousePointAtWeaponHeight - origin;
             direction.y = 0f;
         }
         else
         {
+            isMouseAimInsideDeadZone = false;
+
             // 极端情况下相机射线与水平面平行，使用相机射线的水平投影。
             direction = mouseRay.direction;
             direction.y = 0f;
@@ -529,6 +725,66 @@ public class GrayboxPlayerController : MonoBehaviour
     /// 从旋转后的枪口沿枪的水平方向发射射线：
     /// 命中物体时 AimPoint 为命中点；未命中时 AimPoint 为远点。
     /// </summary>
+    private Transform ResolveWeaponAimPivot()
+    {
+        if (weaponAimStart == null || weaponAimEnd == null)
+        {
+            return null;
+        }
+
+        Transform candidate = weaponAimStart.parent;
+
+        while (candidate != null && candidate != transform)
+        {
+            if (weaponAimEnd.IsChildOf(candidate))
+            {
+                return candidate;
+            }
+
+            candidate = candidate.parent;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Compensates for locomotion animation pitch/yaw after Animator evaluation.
+    /// The barrel itself is aligned first, so the mouse direction and physical ray agree.
+    /// </summary>
+    private void CompensateWeaponAnimationPitch()
+    {
+        if (weaponAimPivot == null ||
+            weaponAimStart == null ||
+            weaponAimEnd == null ||
+            !weaponAimStart.IsChildOf(weaponAimPivot) ||
+            !weaponAimEnd.IsChildOf(weaponAimPivot))
+        {
+            return;
+        }
+
+        Vector3 currentWeaponDirection =
+            weaponAimEnd.position -
+            weaponAimStart.position;
+        Vector3 leveledWeaponDirection = currentWeaponDirection;
+        leveledWeaponDirection.y = 0f;
+
+        if (currentWeaponDirection.sqrMagnitude < 0.0001f ||
+            leveledWeaponDirection.sqrMagnitude < 0.0001f)
+        {
+            return;
+        }
+
+        // The character root owns all horizontal aiming.
+        // The weapon pivot only removes animation-induced pitch.
+        Quaternion pitchCorrection = Quaternion.FromToRotation(
+            currentWeaponDirection.normalized,
+            leveledWeaponDirection.normalized
+        );
+
+        weaponAimPivot.rotation =
+            pitchCorrection * weaponAimPivot.rotation;
+    }
+
     private void UpdateAimPointFromWeaponRay(Vector3 fallbackDirection)
     {
         Transform aimOriginTransform = GetAimOriginTransform();
@@ -548,8 +804,6 @@ public class GrayboxPlayerController : MonoBehaviour
             Vector3 currentWeaponDirection =
                 weaponAimEnd.position -
                 weaponAimStart.position;
-
-            currentWeaponDirection.y = 0f;
 
             if (currentWeaponDirection.sqrMagnitude >= 0.0001f)
             {
@@ -732,7 +986,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
         aimLine.widthMultiplier = aimLineWidth;
         aimLine.SetPosition(0, muzzle.position);
-        aimLine.SetPosition(1, AimPoint + Vector3.up * aimLineEndHeight);
+        aimLine.SetPosition(1, AimPoint);
     }
 
     public void ApplyRollRootMotion(Vector3 animatorDeltaPosition)
@@ -766,12 +1020,45 @@ public class GrayboxPlayerController : MonoBehaviour
 
         characterController.Move(movementDelta);
     }
-    
+
     public void FinishRoll()
     {
+        // 保险处理：无论 EndRollInvincibility 动画事件有没有正常触发，
+        // 翻滚结束时都必须取消无敌。
+        isInvincible = false;
+
         isRolling = false;
         currentMoveDirection = Vector3.zero;
         rollVerticalVelocity = -2f;
+
+        // 翻滚结束后，不瞬间对准鼠标，而是进入平滑恢复阶段。
+        isRecoveringAimAfterRoll = true;
+    }
+    
+    private void OnDisable()
+    {
+        isInvincible = false;
+    }
+
+    /// <summary>
+    /// 由翻滚动画事件调用，开始无敌帧。
+    /// </summary>
+    public void BeginRollInvincibility()
+    {
+        if (!isRolling)
+        {
+            return;
+        }
+
+        isInvincible = true;
+    }
+
+    /// <summary>
+    /// 由翻滚动画事件调用，结束无敌帧。
+    /// </summary>
+    public void EndRollInvincibility()
+    {
+        isInvincible = false;
     }
     
     private void SetAimLineColor()

@@ -17,6 +17,16 @@ public class PlayerRootMotionRelay : MonoBehaviour
                 GetComponentInParent<GrayboxPlayerController>();
         }
     }
+    
+    public void BeginRollInvincibility()
+    {
+        controller?.BeginRollInvincibility();
+    }
+
+    public void EndRollInvincibility()
+    {
+        controller?.EndRollInvincibility();
+    }
 
     private void OnAnimatorMove()
     {
