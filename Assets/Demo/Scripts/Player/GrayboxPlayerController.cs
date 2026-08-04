@@ -70,6 +70,7 @@ public class GrayboxPlayerController : MonoBehaviour
     [Header("References")]
     [SerializeField] private Transform cameraTransform;
     [SerializeField] private Animator animator;
+    [SerializeField] private GamePlayerAttack playerAttack;
 
     [Header("Dodge Roll")]
     [SerializeField] private KeyCode rollKey = KeyCode.LeftShift;
@@ -147,6 +148,11 @@ public class GrayboxPlayerController : MonoBehaviour
         {
             aimCamera = Camera.main;
         }
+        
+        if (playerAttack == null)
+        {
+            playerAttack = GetComponent<GamePlayerAttack>();
+        }
 
         if (cameraTransform == null && aimCamera != null)
         {
@@ -186,6 +192,20 @@ public class GrayboxPlayerController : MonoBehaviour
 
         UpdateMovement();
         UpdateLocomotionAnimator();
+    }
+    
+    private void LateUpdate()
+    {
+        if (!isRolling)
+        {
+            // 先根据动画后的真实枪口方向更新瞄准点。
+            UpdateAim();
+
+            // 瞄准点更新完成后，再尝试发射子弹。
+            TryFire();
+        }
+
+        UpdateAimLine();
     }
 
     private void UpdateMoveInput()
@@ -239,14 +259,34 @@ public class GrayboxPlayerController : MonoBehaviour
         animator.SetFloat(MoveYHash, 0f);
     }
 
-    private void LateUpdate()
+    
+    
+    private void TryFire()
     {
-        if (!isRolling)
+        // 没有按住鼠标左键。
+        if (!isFiring)
         {
-            UpdateAim();
+            return;
         }
 
-        UpdateAimLine();
+        // 当前没有成功计算出瞄准点。
+        if (!HasAimPoint)
+        {
+            return;
+        }
+
+        // 没有配置攻击组件。
+        if (playerAttack == null)
+        {
+            Debug.LogWarning(
+                "GrayboxPlayerController 没有设置 GamePlayerAttack。",
+                this
+            );
+
+            return;
+        }
+
+        playerAttack.TryAttack(AimPoint);
     }
 
     private void TryStartRoll()
