@@ -5,6 +5,9 @@ public class Health : MonoBehaviour, IDamageable
 {
     [SerializeField]
     private float maxHealth = 100f;
+    
+    [SerializeField, Min(0f)]
+    private float destroyDelay = 3f;
 
     private float currentHealth;
 
@@ -49,6 +52,6 @@ public class Health : MonoBehaviour, IDamageable
         IsDead = true;
         Died?.Invoke();
 
-        Destroy(gameObject);
+        Destroy(gameObject, destroyDelay);
     }
 }

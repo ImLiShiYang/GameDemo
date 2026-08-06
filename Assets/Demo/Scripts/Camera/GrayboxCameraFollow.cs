@@ -11,6 +11,11 @@ public class GrayboxCameraFollow : MonoBehaviour
     [SerializeField] private float focusHeight = 1f;
     [SerializeField] private float smoothTime = 0.12f;
 
+    [Header("Orbit Controls")]
+    [SerializeField] private KeyCode rotateLeftKey = KeyCode.Q;
+    [SerializeField] private KeyCode rotateRightKey = KeyCode.E;
+    [SerializeField, Min(0f)] private float orbitSpeed = 90f;
+
     [Header("Free View Toggle")]
     [SerializeField] private KeyCode toggleKey = KeyCode.F1;
     [SerializeField] private GrayboxPlayerController playerController;
@@ -28,6 +33,7 @@ public class GrayboxCameraFollow : MonoBehaviour
     private bool playerControllerWasEnabled;
     private float freeYaw;
     private float freePitch;
+    private float orbitYaw;
 
     public bool IsFreeView => isFreeView;
 
@@ -60,6 +66,10 @@ public class GrayboxCameraFollow : MonoBehaviour
         if (isFreeView)
         {
             UpdateFreeView();
+        }
+        else
+        {
+            UpdateOrbitInput();
         }
     }
 
@@ -177,6 +187,25 @@ public class GrayboxCameraFollow : MonoBehaviour
         freePitch = angles.x > 180f ? angles.x - 360f : angles.x;
     }
 
+
+    private void UpdateOrbitInput()
+    {
+        float orbitInput = 0f;
+
+        if (Input.GetKey(rotateLeftKey))
+        {
+            orbitInput -= 1f;
+        }
+
+        if (Input.GetKey(rotateRightKey))
+        {
+            orbitInput += 1f;
+        }
+
+        orbitYaw = Mathf.Repeat(
+            orbitYaw + orbitInput * orbitSpeed * Time.deltaTime,
+            360f);
+    }
     private Vector3 GetTargetFocusPoint()
     {
         return target.position + Vector3.up * focusHeight;
@@ -184,7 +213,8 @@ public class GrayboxCameraFollow : MonoBehaviour
 
     private Vector3 GetCameraOffsetFromFocus()
     {
-        return offset - Vector3.up * focusHeight;
+        Vector3 cameraOffset = offset - Vector3.up * focusHeight;
+        return Quaternion.Euler(0f, orbitYaw, 0f) * cameraOffset;
     }
 
     private void ApplyStableFollowTransform()

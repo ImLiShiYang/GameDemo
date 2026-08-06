@@ -11,11 +11,15 @@ public class Projectile : MonoBehaviour
     [SerializeField]
     private float lifeTime = 3f;
 
+    private static readonly RaycastHit[] CastHits = new RaycastHit[16];
+
     private Vector3 moveDirection;
     private float damage;
     private GameObject owner;
 
     private Rigidbody projectileRigidbody;
+    private SphereCollider projectileCollider;
+    private Vector3 previousPosition;
 
     private bool initialized;
     private bool hasHit;
@@ -23,19 +27,21 @@ public class Projectile : MonoBehaviour
     private void Awake()
     {
         projectileRigidbody = GetComponent<Rigidbody>();
+        projectileCollider = GetComponent<SphereCollider>();
 
         projectileRigidbody.useGravity = false;
         projectileRigidbody.isKinematic = true;
+        previousPosition = projectileRigidbody.position;
     }
 
-    /// <summary>
-    /// 子弹生成后，由攻击者传入本次攻击数据。
-    /// </summary>
-    public void Initialize(Vector3 direction,float damageAmount,GameObject projectileOwner)
+    public void Initialize(
+        Vector3 direction,
+        float damageAmount,
+        GameObject projectileOwner)
     {
         if (direction.sqrMagnitude < 0.001f)
         {
-            Debug.LogWarning("Projectile 收到了无效的移动方向。");
+            Debug.LogWarning("Projectile received an invalid movement direction.");
             Destroy(gameObject);
             return;
         }
@@ -43,13 +49,10 @@ public class Projectile : MonoBehaviour
         moveDirection = direction.normalized;
         damage = Mathf.Max(0f, damageAmount);
         owner = projectileOwner;
-
         initialized = true;
+        previousPosition = projectileRigidbody.position;
 
-        // 让子弹模型朝向飞行方向。
         transform.forward = moveDirection;
-
-        // 防止没有碰到任何物体的子弹一直留在场景里。
         Destroy(gameObject, lifeTime);
     }
 
@@ -60,49 +63,106 @@ public class Projectile : MonoBehaviour
             return;
         }
 
-        Vector3 nextPosition =
-            projectileRigidbody.position +
-            moveDirection * speed * Time.fixedDeltaTime;
+        previousPosition = projectileRigidbody.position;
+        float travelDistance = speed * Time.fixedDeltaTime;
 
-        projectileRigidbody.MovePosition(nextPosition);
+        if (TryGetSphereCastHit(previousPosition,travelDistance,out RaycastHit hit))
+        {
+            HandleHit(hit.collider, hit.point, hit.normal);
+            return;
+        }
+
+        projectileRigidbody.MovePosition(
+            previousPosition + moveDirection * travelDistance);
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!initialized || hasHit)
+        if (!initialized || hasHit || other == null || other.isTrigger)
         {
             return;
         }
 
-        // 忽略发射子弹的玩家及其所有子物体。
-        if (owner != null &&other.transform.root == owner.transform.root)
+        if (IsOwnerCollider(other))
         {
             return;
         }
 
-        // 从碰撞物体或其父物体上寻找伤害接口。
-        IDamageable damageable =other.GetComponentInParent<IDamageable>();
-            
+        // Fallback for collisions that occur outside the SphereCast path.
+        ResolveFallbackHitPose(other, out Vector3 hitPoint, out Vector3 hitNormal);
+        HandleHit(other, hitPoint, hitNormal);
+    }
+
+    private bool TryGetSphereCastHit(Vector3 origin,float travelDistance,out RaycastHit closestHit)
+    {
+        closestHit = default;
+
+        if (projectileCollider == null || travelDistance <= 0f)
+        {
+            return false;
+        }
+
+        Vector3 scale = transform.lossyScale;
+        float largestScale = Mathf.Max(
+            Mathf.Abs(scale.x),
+            Mathf.Abs(scale.y),
+            Mathf.Abs(scale.z));
+        float radius = projectileCollider.radius * largestScale;
+
+        int hitCount = Physics.SphereCastNonAlloc(
+            origin,
+            radius,
+            moveDirection,
+            CastHits,
+            travelDistance,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+
+        float closestDistance = float.PositiveInfinity;
+
+        for (int index = 0; index < hitCount; index++)
+        {
+            RaycastHit candidate = CastHits[index];
+            Collider candidateCollider = candidate.collider;
+
+            if (candidateCollider == null ||
+                candidateCollider == projectileCollider ||
+                IsOwnerCollider(candidateCollider) ||
+                candidate.distance >= closestDistance)
+            {
+                continue;
+            }
+
+            closestDistance = candidate.distance;
+            closestHit = candidate;
+        }
+
+        return closestDistance < float.PositiveInfinity;
+    }
+
+    private void HandleHit(Collider hitCollider,Vector3 hitPoint,Vector3 hitNormal)
+    {
+        if (hasHit || hitCollider == null || IsOwnerCollider(hitCollider))
+        {
+            return;
+        }
+
+        hasHit = true;
+
+        if (hitNormal.sqrMagnitude < 0.0001f)
+        {
+            hitNormal = -moveDirection;
+        }
+        else
+        {
+            hitNormal.Normalize();
+        }
+
+        IDamageable damageable =
+            hitCollider.GetComponentInParent<IDamageable>();
+
         if (damageable != null && !damageable.IsDead)
         {
-            hasHit = true;
-
-            Vector3 hitPoint =other.ClosestPoint(transform.position);
-
-            // 从目标表面命中点指向子弹中心，近似作为表面法线。
-            Vector3 hitNormal =transform.position - hitPoint;
-
-            // 子弹中心进入 Collider 内部时，ClosestPoint 可能返回子弹自身位置，
-            // 此时改用子弹飞行方向的反方向作为备用法线。
-            if (hitNormal.sqrMagnitude < 0.0001f)
-            {
-                hitNormal = -moveDirection;
-            }
-            else
-            {
-                hitNormal.Normalize();
-            }
-
             DamageInfo damageInfo = new DamageInfo(
                 damage,
                 owner,
@@ -111,19 +171,35 @@ public class Projectile : MonoBehaviour
                 hitNormal);
 
             damageable.TakeDamage(damageInfo);
+        }
 
-            Debug.Log(
-                $"Projectile 命中：{other.name}，造成伤害：{damage}");
+        Destroy(gameObject);
+    }
 
-            Destroy(gameObject);
+    private bool IsOwnerCollider(Collider targetCollider)
+    {
+        return targetCollider != null &&
+               owner != null &&
+               targetCollider.transform.root == owner.transform.root;
+    }
+
+    private void ResolveFallbackHitPose(
+        Collider hitCollider,
+        out Vector3 hitPoint,
+        out Vector3 hitNormal)
+    {
+        Ray fallbackRay = new Ray(
+            previousPosition - moveDirection * 0.5f,
+            moveDirection);
+
+        if (hitCollider.Raycast(fallbackRay, out RaycastHit hit, 1.5f))
+        {
+            hitPoint = hit.point;
+            hitNormal = hit.normal;
             return;
         }
 
-        // 碰到地面或墙壁，即使目标不能受伤，也销毁子弹。
-        if (!other.isTrigger)
-        {
-            hasHit = true;
-            Destroy(gameObject);
-        }
+        hitPoint = projectileRigidbody.position;
+        hitNormal = -moveDirection;
     }
 }
