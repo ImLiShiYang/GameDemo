@@ -1,0 +1,687 @@
+using UnityEngine;
+using UnityEngine.AI;
+
+[RequireComponent(typeof(NavMeshAgent))]
+[RequireComponent(typeof(Animator))]
+public class EnemyAIController : MonoBehaviour
+{
+    private enum EnemyState
+    {
+        Patrol,
+        Chase,
+        Attack
+    }
+
+    [Header("目标")]
+    [Tooltip("直接拖入玩家根对象。未赋值时会尝试寻找 Player 标签。")]
+    [SerializeField] private Transform player;
+
+    [Header("感知")]
+    [SerializeField, Min(0.1f)]
+    private float detectionRange = 10f;
+
+    [Tooltip("玩家超过这个距离后，小怪放弃追击。应当大于 Detection Range。")]
+    [SerializeField, Min(0.1f)]
+    private float loseTargetRange = 14f;
+
+    [Header("移动")]
+    [Tooltip("小怪巡逻时的移动速度。")]
+    [SerializeField, Min(0f)]
+    private float patrolMoveSpeed = 1.5f;
+
+    [Tooltip("小怪追击玩家时的移动速度。")]
+    [SerializeField, Min(0f)]
+    private float chaseMoveSpeed = 3.5f;
+    
+    [Header("巡逻")]
+    [Tooltip("以小怪出生点为中心的巡逻半径。")]
+    [SerializeField, Min(0.1f)]
+    private float patrolRadius = 8f;
+
+    [SerializeField]
+    private Vector2 patrolWaitTime = new Vector2(1f, 3f);
+
+    [Tooltip("随机点附近搜索 NavMesh 的范围。")]
+    [SerializeField, Min(0.1f)]
+    private float patrolSampleDistance = 3f;
+
+    [Header("攻击")]
+    [SerializeField, Min(0.1f)]
+    private float attackRange = 1.8f;
+
+    [SerializeField, Min(0f)]
+    private float attackDamage = 15f;
+
+    [SerializeField, Min(0.1f)]
+    private float attackCooldown = 1.3f;
+
+    [Tooltip("攻击命中时允许的额外距离，避免动画过程中目标轻微移动导致打不中。")]
+    [SerializeField, Min(0f)]
+    private float attackHitTolerance = 0.5f;
+
+    [SerializeField, Min(0f)]
+    private float attackRotationSpeed = 720f;
+    
+    [Tooltip("与玩家方向小于这个角度时，才允许开始攻击。")]
+    [SerializeField, Range(0.1f, 30f)]
+    private float attackFacingAngle = 5f;
+
+    [Header("远程魔法攻击")]
+    [Tooltip("追踪魔法弹预制体，预制体根节点必须带有 EnemyHomingProjectile。")]
+    [SerializeField]
+    private EnemyHomingProjectile homingProjectilePrefab;
+
+    [Tooltip("魔法弹生成位置，通常放在双手之间或右手前方。")]
+    [SerializeField]
+    private Transform projectileSpawnPoint;
+
+    [Tooltip("在生成点基础上向前偏移，防止魔法弹生成在小怪自身碰撞体内。")]
+    [SerializeField, Min(0f)]
+    private float projectileSpawnForwardOffset = 0.15f;
+    
+    [Header("Animator 参数")]
+    [SerializeField]
+    private string speedParameter = "Speed";
+
+    [SerializeField]
+    private string attackParameter = "Attack";
+
+    [Tooltip("Animator 中攻击状态的名称，不要包含 Base Layer 前缀。")]
+    [SerializeField]
+    private string attackStateName = "Mutant Swiping";
+
+    private NavMeshAgent agent;
+    private Animator animator;
+    private Health health;
+
+    private EnemyState currentState;
+    private Vector3 patrolCenter;
+
+    private float waitEndTime;
+    private float nextAttackTime;
+    private bool isWaiting;
+
+    private int speedHash;
+    private int attackHash;
+    private int attackStateHash;
+
+    private void Awake()
+    {
+        agent = GetComponent<NavMeshAgent>();
+        animator = GetComponent<Animator>();
+        health = GetComponent<Health>();
+
+        speedHash = Animator.StringToHash(speedParameter);
+        attackHash = Animator.StringToHash(attackParameter);
+        attackStateHash = Animator.StringToHash(attackStateName);
+    }
+
+    private void Start()
+    {
+        patrolCenter = transform.position;
+
+        if (player == null)
+        {
+            GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
+
+            if (playerObject != null)
+            {
+                player = playerObject.transform;
+            }
+        }
+
+        // 让小怪在略小于攻击距离的位置停止。
+        agent.stoppingDistance = attackRange * 0.85f;
+
+        EnterPatrolState();
+    }
+
+    private void Update()
+    {
+        if (health != null && health.IsDead)
+        {
+            StopAfterDeath();
+            return;
+        }
+
+        // 小怪必须处于已经烘焙的 NavMesh 上。
+        if (!agent.isOnNavMesh)
+        {
+            animator.SetFloat(speedHash, 0f);
+            return;
+        }
+
+        float distanceToPlayer = player == null
+            ? float.PositiveInfinity
+            : GetFlatDistance(transform.position, player.position);
+
+        switch (currentState)
+        {
+            case EnemyState.Patrol:
+                UpdatePatrol(distanceToPlayer);
+                break;
+
+            case EnemyState.Chase:
+                UpdateChase(distanceToPlayer);
+                break;
+
+            case EnemyState.Attack:
+                UpdateAttack(distanceToPlayer);
+                break;
+        }
+
+        UpdateMoveAnimation();
+    }
+
+    private void StopAfterDeath()
+    {
+        animator.ResetTrigger(attackHash);
+        animator.SetFloat(speedHash, 0f);
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            agent.isStopped = true;
+            agent.ResetPath();
+        }
+
+        enabled = false;
+    }
+    
+    private void UpdatePatrol(float distanceToPlayer)
+    {
+        if (distanceToPlayer <= detectionRange)
+        {
+            EnterChaseState();
+            return;
+        }
+
+        if (agent.pathPending)
+        {
+            return;
+        }
+
+        bool reachedDestination =
+            !agent.hasPath ||
+            agent.remainingDistance <= agent.stoppingDistance + 0.15f;
+
+        if (!reachedDestination)
+        {
+            return;
+        }
+
+        if (!isWaiting)
+        {
+            isWaiting = true;
+            agent.isStopped = true;
+
+            waitEndTime = Time.time +
+                          Random.Range(patrolWaitTime.x, patrolWaitTime.y);
+
+            return;
+        }
+
+        if (Time.time >= waitEndTime)
+        {
+            isWaiting = false;
+            agent.isStopped = false;
+
+            SetNewPatrolDestination();
+        }
+    }
+
+    private void UpdateChase(float distanceToPlayer)
+    {
+        if (player == null || distanceToPlayer >= loseTargetRange)
+        {
+            EnterPatrolState();
+            return;
+        }
+
+        if (distanceToPlayer <= attackRange)
+        {
+            EnterAttackState();
+            return;
+        }
+
+        agent.isStopped = false;
+        agent.SetDestination(player.position);
+    }
+
+    private void UpdateAttack(float distanceToPlayer)
+    {
+        if (player == null)
+        {
+            EnterPatrolState();
+            return;
+        }
+
+        // 进入攻击状态后停止移动。
+        agent.isStopped = true;
+
+        /*
+         * 攻击动画正在播放时直接返回。
+         *
+         * 这里不会调用 FacePlayer()，
+         * 因此攻击过程中不会继续转向玩家。
+         */
+        if (IsAttackAnimationPlaying())
+        {
+            return;
+        }
+
+        /*
+         * 只有当前攻击动画结束后，
+         * 才判断玩家是否已经离开攻击范围。
+         */
+        if (distanceToPlayer > attackRange + attackHitTolerance)
+        {
+            EnterChaseState();
+            return;
+        }
+
+        /*
+         * 攻击动画尚未开始时，先朝向玩家。
+         * 返回 true 表示已经基本对准。
+         */
+        bool isFacingPlayer = FacePlayer();
+
+        if (!isFacingPlayer)
+        {
+            return;
+        }
+
+        /*
+         * 已经对准玩家，并且攻击冷却结束，
+         * 才正式触发攻击动画。
+         */
+        if (Time.time >= nextAttackTime)
+        {
+            nextAttackTime = Time.time + attackCooldown;
+            animator.SetTrigger(attackHash);
+        }
+    }
+
+    private bool IsAttackAnimationPlaying()
+    {
+        AnimatorStateInfo currentState = animator.GetCurrentAnimatorStateInfo(0);
+
+        if (currentState.shortNameHash == attackStateHash)
+        {
+            return true;
+        }
+
+        return animator.IsInTransition(0) &&
+               animator.GetNextAnimatorStateInfo(0).shortNameHash == attackStateHash;
+    }
+
+    private void EnterPatrolState()
+    {
+        currentState = EnemyState.Patrol;
+
+        isWaiting = false;
+        agent.isStopped = false;
+
+        // 设置巡逻速度。
+        agent.speed = patrolMoveSpeed;
+
+        SetNewPatrolDestination();
+    }
+
+    private void EnterChaseState()
+    {
+        currentState = EnemyState.Chase;
+
+        isWaiting = false;
+        agent.isStopped = false;
+
+        // 设置追击速度。
+        agent.speed = chaseMoveSpeed;
+
+        if (player != null)
+        {
+            agent.SetDestination(player.position);
+        }
+    }
+
+    private void EnterAttackState()
+    {
+        currentState = EnemyState.Attack;
+
+        agent.isStopped = true;
+        agent.ResetPath();
+
+        // 进入攻击状态后立即允许攻击。
+        nextAttackTime = Time.time;
+    }
+
+    private void SetNewPatrolDestination()
+    {
+        const int maxAttempts = 20;
+
+        for (int i = 0; i < maxAttempts; i++)
+        {
+            Vector3 randomOffset = Random.insideUnitSphere * patrolRadius;
+            randomOffset.y = 0f;
+
+            Vector3 randomPosition = patrolCenter + randomOffset;
+
+            if (NavMesh.SamplePosition(
+                    randomPosition,
+                    out NavMeshHit hit,
+                    patrolSampleDistance,
+                    NavMesh.AllAreas))
+            {
+                agent.SetDestination(hit.position);
+                return;
+            }
+        }
+
+        Debug.LogWarning(
+            $"{name} 没有找到可用的随机巡逻点，请检查 NavMesh 和巡逻半径。",
+            this);
+    }
+
+    /// <summary>
+    /// 在攻击开始前转向玩家。
+    /// 返回 true 表示已经基本对准玩家，可以开始攻击。
+    /// </summary>
+    private bool FacePlayer()
+    {
+        if (player == null)
+        {
+            return false;
+        }
+
+        Vector3 direction =
+            player.position - transform.position;
+
+        // 只在水平面上转向。
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude < 0.001f)
+        {
+            return true;
+        }
+
+        direction.Normalize();
+
+        Quaternion targetRotation =
+            Quaternion.LookRotation(
+                direction,
+                Vector3.up
+            );
+
+        // 计算当前朝向与玩家方向之间的角度。
+        float angleToPlayer =
+            Quaternion.Angle(
+                transform.rotation,
+                targetRotation
+            );
+
+        /*
+         * 已经进入允许误差范围：
+         * 直接精确对齐，避免剩余的小角度误差。
+         */
+        if (angleToPlayer <= attackFacingAngle)
+        {
+            transform.rotation = targetRotation;
+            return true;
+        }
+
+        // 尚未对准时继续平滑旋转。
+        transform.rotation =
+            Quaternion.RotateTowards(
+                transform.rotation,
+                targetRotation,
+                attackRotationSpeed * Time.deltaTime
+            );
+
+        return false;
+    }
+
+    private void UpdateMoveAnimation()
+    {
+        float normalizedSpeed = 0f;
+
+        if (!agent.isStopped && agent.speed > 0.01f)
+        {
+            normalizedSpeed = agent.velocity.magnitude / agent.speed;
+        }
+
+        animator.SetFloat(
+            speedHash,
+            normalizedSpeed,
+            0.1f,
+            Time.deltaTime);
+    }
+
+    /// <summary>
+    /// 在攻击动画真正命中的那一帧，通过 Animation Event 调用。
+    /// </summary>
+    public void AnimationEvent_AttackHit()
+    {
+        // 小怪已经死亡，或者玩家不存在，不处理伤害。
+        if ((health != null && health.IsDead) || player == null)
+        {
+            return;
+        }
+
+        /*
+         * 使用小怪根节点和玩家根节点的 XZ 平面距离进行命中判定。
+         * 忽略 Y 轴高度差。
+         */
+        float distance = GetFlatDistance(
+            transform.position,
+            player.position
+        );
+
+        float hitDistance =
+            attackRange + attackHitTolerance;
+
+        // 动画播放到命中帧时，玩家已经离开攻击范围，本次攻击挥空。
+        if (distance > hitDistance)
+        {
+            Debug.Log(
+                $"{name} 攻击挥空，玩家距离：{distance:F2}，" +
+                $"允许命中距离：{hitDistance:F2}",
+                this
+            );
+
+            return;
+        }
+
+        // 在玩家根对象、子对象或父对象上寻找 Health。
+        Health playerHealth = player.GetComponent<Health>();
+
+        if (playerHealth == null)
+        {
+            playerHealth = player.GetComponentInChildren<Health>();
+        }
+
+        if (playerHealth == null)
+        {
+            playerHealth = player.GetComponentInParent<Health>();
+        }
+
+        if (playerHealth == null)
+        {
+            Debug.LogWarning(
+                $"没有在玩家 {player.name} 上找到 Health 组件。",
+                player
+            );
+
+            return;
+        }
+
+        if (playerHealth.IsDead)
+        {
+            return;
+        }
+
+        /*
+         * 伤害方向：
+         * 从小怪指向玩家。
+         */
+        Vector3 hitDirection =
+            player.position - transform.position;
+
+        hitDirection.y = 0f;
+
+        if (hitDirection.sqrMagnitude < 0.0001f)
+        {
+            hitDirection = transform.forward;
+        }
+        else
+        {
+            hitDirection.Normalize();
+        }
+
+        /*
+         * 伤害位置：
+         * 优先使用玩家 CharacterController 的中心，
+         * 找不到时使用玩家根节点上方 1 米。
+         */
+        CharacterController playerCharacterController =
+            player.GetComponent<CharacterController>();
+
+        Vector3 hitPoint = playerCharacterController != null
+            ? playerCharacterController.bounds.center
+            : player.position + Vector3.up;
+
+        // 命中表面法线朝向攻击者。
+        // hitDirection 是小怪指向玩家，所以取反后是玩家指向小怪。
+        Vector3 hitNormal = -hitDirection;
+
+        DamageInfo damageInfo = new DamageInfo(
+            attackDamage,  // 伤害数值
+            gameObject,    // 伤害来源：当前小怪
+            hitPoint,      // 命中位置
+            hitDirection,  // 伤害方向：小怪指向玩家
+            hitNormal      // 命中法线：玩家指向小怪
+        );
+        
+        playerHealth.TakeDamage(in damageInfo);
+
+        Debug.Log(
+            $"{name} 命中玩家，造成 {attackDamage} 点伤害，" +
+            $"玩家剩余生命：{playerHealth.CurrentHealth}",
+            this
+        );
+    }
+
+    /// <summary>
+    /// 远程小怪的施法动画播放到释放帧时，由 Animation Event 调用。
+    /// 近战动画继续调用 AnimationEvent_AttackHit，不要混用。
+    /// </summary>
+    public void AnimationEvent_FireHomingProjectile()
+    {
+        // 小怪死亡或者玩家不存在，不生成魔法弹。
+        if ((health != null && health.IsDead) || player == null)
+        {
+            return;
+        }
+
+        if (homingProjectilePrefab == null)
+        {
+            Debug.LogWarning(
+                $"{name} 没有配置 Homing Projectile Prefab。",
+                this
+            );
+
+            return;
+        }
+
+        if (projectileSpawnPoint == null)
+        {
+            Debug.LogWarning(
+                $"{name} 没有配置 Projectile Spawn Point。",
+                this
+            );
+
+            return;
+        }
+
+        /*
+         * 先获取玩家身体中心。
+         * 这里只决定魔法弹出生时的初始方向。
+         * 后续持续转向由 EnemyHomingProjectile 自己处理。
+         */
+        CharacterController playerCharacterController =
+            player.GetComponent<CharacterController>();
+
+        if (playerCharacterController == null)
+        {
+            playerCharacterController =
+                player.GetComponentInChildren<CharacterController>();
+        }
+
+        Vector3 targetPosition =
+            playerCharacterController != null
+                ? playerCharacterController.bounds.center
+                : player.position + Vector3.up;
+
+        Vector3 initialDirection =
+            targetPosition - projectileSpawnPoint.position;
+
+        if (initialDirection.sqrMagnitude < 0.0001f)
+        {
+            initialDirection = transform.forward;
+        }
+
+        initialDirection.Normalize();
+
+        /*
+         * 沿真正的发射方向向前偏移。
+         * 即使小怪当前没有完全转向玩家，生成位置也不会偏到错误方向。
+         */
+        Vector3 spawnPosition =
+            projectileSpawnPoint.position +
+            initialDirection * projectileSpawnForwardOffset;
+
+        Quaternion spawnRotation =
+            Quaternion.LookRotation(
+                initialDirection,
+                Vector3.up
+            );
+
+        EnemyHomingProjectile projectile =
+            Instantiate(
+                homingProjectilePrefab,
+                spawnPosition,
+                spawnRotation
+            );
+
+        /*
+         * 把玩家 Transform、伤害和发射者传给追踪弹。
+         */
+        projectile.Initialize(
+            player,
+            attackDamage,
+            gameObject
+        );
+    }
+    
+    private static float GetFlatDistance(Vector3 first, Vector3 second)
+    {
+        first.y = 0f;
+        second.y = 0f;
+
+        return Vector3.Distance(first, second);
+    }
+
+    private void OnDrawGizmosSelected()
+    {
+        Vector3 center = Application.isPlaying
+            ? patrolCenter
+            : transform.position;
+
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawWireSphere(center, patrolRadius);
+
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawWireSphere(transform.position, detectionRange);
+
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(transform.position, attackRange);
+    }
+}

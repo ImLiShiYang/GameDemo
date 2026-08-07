@@ -10,6 +10,7 @@ public class Health : MonoBehaviour, IDamageable
     private float destroyDelay = 3f;
 
     private float currentHealth;
+    private GrayboxPlayerController playerController;
 
     public bool IsDead { get; private set; }
 
@@ -22,6 +23,9 @@ public class Health : MonoBehaviour, IDamageable
     private void Awake()
     {
         currentHealth = maxHealth;
+
+        // 小怪身上没有这个组件，因此只会对玩家生效。
+        playerController = GetComponent<GrayboxPlayerController>();
     }
 
     public void TakeDamage(in DamageInfo damageInfo)
@@ -31,8 +35,21 @@ public class Health : MonoBehaviour, IDamageable
             return;
         }
 
+        // 玩家处于翻滚无敌帧时，不扣血，也不触发受击反馈。
+        if (playerController != null &&playerController.IsInvincible)
+        {
+            Debug.Log("玩家处于翻滚无敌帧，本次伤害被免疫。", this);
+            return;
+        }
+
         float damage = Mathf.Max(0f, damageInfo.Amount);
-        currentHealth = Mathf.Max(0f, currentHealth - damage);
+
+        if (damage <= 0f)
+        {
+            return;
+        }
+
+        currentHealth = Mathf.Max(0f,currentHealth - damage );
 
         Damaged?.Invoke(damageInfo);
 
