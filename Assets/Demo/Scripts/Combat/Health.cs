@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEngine;
 
 public class Health : MonoBehaviour, IDamageable
@@ -11,6 +12,7 @@ public class Health : MonoBehaviour, IDamageable
 
     private float currentHealth;
     private GrayboxPlayerController playerController;
+    private Coroutine returnToPoolRoutine;
 
     public bool IsDead { get; private set; }
 
@@ -27,6 +29,18 @@ public class Health : MonoBehaviour, IDamageable
         // 小怪身上没有这个组件，因此只会对玩家生效。
         playerController = GetComponent<GrayboxPlayerController>();
     }
+    public void ResetForReuse()
+    {
+        if (returnToPoolRoutine != null)
+        {
+            StopCoroutine(returnToPoolRoutine);
+            returnToPoolRoutine = null;
+        }
+
+        IsDead = false;
+        currentHealth = maxHealth;
+    }
+
 
     public void TakeDamage(in DamageInfo damageInfo)
     {
@@ -69,6 +83,32 @@ public class Health : MonoBehaviour, IDamageable
         IsDead = true;
         Died?.Invoke();
 
-        Destroy(gameObject, destroyDelay);
+        PooledObject pooledObject = GetComponent<PooledObject>();
+
+        if (pooledObject == null)
+        {
+            Destroy(gameObject, destroyDelay);
+            return;
+        }
+
+        if (destroyDelay <= 0f)
+        {
+            pooledObject.Release();
+            return;
+        }
+
+        returnToPoolRoutine = StartCoroutine(ReturnToPoolAfterDelay(pooledObject));
+    }
+
+    private IEnumerator ReturnToPoolAfterDelay(PooledObject pooledObject)
+    {
+        yield return new WaitForSeconds(destroyDelay);
+
+        returnToPoolRoutine = null;
+
+        if (pooledObject != null && !pooledObject.IsInPool)
+        {
+            pooledObject.Release();
+        }
     }
 }

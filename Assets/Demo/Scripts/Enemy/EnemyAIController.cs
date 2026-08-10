@@ -126,6 +126,43 @@ public class EnemyAIController : MonoBehaviour
         attackHash = Animator.StringToHash(attackParameter);
         attackStateHash = Animator.StringToHash(attackStateName);
     }
+    public void ResetForReuse()
+    {
+        enabled = true;
+        patrolCenter = transform.position;
+        isWaiting = false;
+        waitEndTime = 0f;
+        nextAttackTime = Time.time;
+        hitSlowEndTime = 0f;
+
+        if (player == null)
+        {
+            GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
+
+            if (playerObject != null)
+            {
+                player = playerObject.transform;
+            }
+        }
+
+        if (agent == null || !agent.enabled)
+        {
+            return;
+        }
+
+        agent.stoppingDistance = attackRange * 0.85f;
+
+        if (!agent.isOnNavMesh)
+        {
+            animator.SetFloat(speedHash, 0f);
+            return;
+        }
+
+        agent.isStopped = false;
+        agent.ResetPath();
+        EnterPatrolState();
+    }
+
 
     private void Start()
     {

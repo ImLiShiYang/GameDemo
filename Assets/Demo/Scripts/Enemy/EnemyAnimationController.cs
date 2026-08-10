@@ -66,6 +66,29 @@ public class EnemyAnimationController : MonoBehaviour
         animator.ResetTrigger(HitHash);
         animator.SetTrigger(HitHash);
     }
+    public void ResetForReuse()
+    {
+        isDead = false;
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+
+        foreach (Collider enemyCollider in colliders)
+        {
+            enemyCollider.enabled = true;
+        }
+
+        if (animator == null)
+        {
+            return;
+        }
+
+        animator.Rebind();
+        animator.Update(0f);
+        animator.SetFloat(SpeedHash, 0f);
+        animator.ResetTrigger(AttackHash);
+        animator.ResetTrigger(HitHash);
+        animator.SetBool(DeadHash, false);
+    }
+
 
     public void PlayDeath()
     {

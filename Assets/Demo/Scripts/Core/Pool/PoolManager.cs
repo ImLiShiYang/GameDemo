@@ -21,11 +21,16 @@ public class PoolManager : MonoBehaviour
     [SerializeField, Min(1)] private int damageNumberMaxSize = 64;
 
     [Header("VFX Pool")]
+
+    [Header("Enemy Pool")]
+    [SerializeField, Min(0)] private int enemyPrewarmCountPerPrefab = 6;
+    [SerializeField, Min(1)] private int enemyMaxSizePerPrefab = 24;
     [SerializeField, Min(0)] private int vfxPrewarmCount = 8;
     [SerializeField, Min(1)] private int vfxMaxSizePerPrefab = 32;
 
     private Transform bulletRoot;
     private Transform enemyProjectileRoot;
+    private Transform enemyRoot;
     private Transform damageNumberRoot;
     private Transform vfxRoot;
 
@@ -37,6 +42,7 @@ public class PoolManager : MonoBehaviour
 
     private GameObjectPool damageNumberPool;
     private GameObject damageNumberPrefabKey;
+    private readonly Dictionary<GameObject, GameObjectPool> enemyPools = new();
 
     private readonly Dictionary<GameObject, GameObjectPool> vfxPools = new();
 
@@ -44,6 +50,7 @@ public class PoolManager : MonoBehaviour
     {
         bulletRoot = CreateCategoryRoot("Bullet Pool");
         enemyProjectileRoot = CreateCategoryRoot("EnemyProjectile Pool");
+        enemyRoot = CreateCategoryRoot("Enemy Pool");
         damageNumberRoot = CreateCategoryRoot("DamageNumber Pool");
         vfxRoot = CreateCategoryRoot("VFX Pool");
     }
@@ -111,6 +118,30 @@ public class PoolManager : MonoBehaviour
         }
 
         GetOrCreateVfxPool(prefab);
+    }
+
+    public void WarmEnemyPool(GameObject prefab)
+    {
+        if (prefab == null)
+        {
+            return;
+        }
+
+        GetOrCreateEnemyPool(prefab);
+    }
+
+    public GameObject GetEnemy(
+        GameObject prefab,
+        Vector3 position,
+        Quaternion rotation)
+    {
+        if (prefab == null)
+        {
+            Debug.LogError("GetEnemy received a null prefab.", this);
+            return null;
+        }
+
+        return GetOrCreateEnemyPool(prefab).Get(position, rotation);
     }
 
     public Projectile GetBullet(Projectile prefab, Vector3 position,Quaternion rotation)
@@ -271,6 +302,29 @@ public class PoolManager : MonoBehaviour
         return newPool;
     }
 
+    private GameObjectPool GetOrCreateEnemyPool(GameObject prefab)
+    {
+        if (enemyPools.TryGetValue(prefab, out GameObjectPool existingPool))
+        {
+            return existingPool;
+        }
+
+        Transform prefabPoolRoot = new GameObject(prefab.name).transform;
+        prefabPoolRoot.SetParent(enemyRoot, false);
+
+        GameObjectPool newPool = new GameObjectPool(
+            prefab,
+            prefabPoolRoot,
+            enemyPrewarmCountPerPrefab,
+            enemyMaxSizePerPrefab,
+            RestartEnemy,
+            StopEnemy
+        );
+
+        enemyPools.Add(prefab, newPool);
+        return newPool;
+    }
+
     private IEnumerator ReleaseAfterDelay(
         PooledObject pooledObject,
         float delay,
@@ -330,6 +384,31 @@ public class PoolManager : MonoBehaviour
         rootTransform.SetParent(transform, false);
 
         return rootTransform;
+    }
+
+    private static void RestartEnemy(GameObject enemy)
+    {
+        Health health = enemy.GetComponent<Health>();
+        health?.ResetForReuse();
+
+        EnemyAnimationController animationController =
+            enemy.GetComponent<EnemyAnimationController>();
+        animationController?.ResetForReuse();
+
+        EnemyAIController aiController = enemy.GetComponent<EnemyAIController>();
+        aiController?.ResetForReuse();
+    }
+
+    private static void StopEnemy(GameObject enemy)
+    {
+        UnityEngine.AI.NavMeshAgent agent =
+            enemy.GetComponent<UnityEngine.AI.NavMeshAgent>();
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            agent.isStopped = true;
+            agent.ResetPath();
+        }
     }
 
     private static void RestartVfx(GameObject effect)
