@@ -1131,8 +1131,7 @@ public class GrayboxPlayerController : MonoBehaviour
             !isRolling &&
             showAimLine &&
             muzzle != null &&
-            HasAimPoint &&
-            !isHitStunned;
+            HasAimPoint;
 
         aimLine.enabled = shouldShow;
 
@@ -1142,8 +1141,66 @@ public class GrayboxPlayerController : MonoBehaviour
         }
 
         aimLine.widthMultiplier = aimLineWidth;
+
+        // 起点永远跟随枪口。
         aimLine.SetPosition(0, muzzle.position);
+
+        /*
+         * 受击状态：
+         * 不再让瞄准线指向 AimPoint，
+         * 而是沿枪当前被动画带动后的真实方向延伸。
+         */
+        if (isHitStunned)
+        {
+            Vector3 weaponDirection = GetCurrentWeaponDirection();
+
+            if (weaponDirection.sqrMagnitude < 0.0001f)
+            {
+                weaponDirection = muzzle.forward;
+            }
+
+            weaponDirection.Normalize();
+
+            // 保持瞄准线原本大致的长度。
+            float lineLength = Vector3.Distance(
+                muzzle.position,
+                AimPoint
+            );
+
+            aimLine.SetPosition(
+                1,
+                muzzle.position +
+                weaponDirection * lineLength
+            );
+
+            return;
+        }
+
+        /*
+         * 正常状态：
+         * 仍然指向正常计算出来的 AimPoint。
+         */
         aimLine.SetPosition(1, AimPoint);
+    }
+    
+    private Vector3 GetCurrentWeaponDirection()
+    {
+        if (weaponAimStart != null &&weaponAimEnd != null)
+        {
+            Vector3 direction =weaponAimEnd.position -weaponAimStart.position;
+
+            if (direction.sqrMagnitude >= 0.0001f)
+            {
+                return direction.normalized;
+            }
+        }
+
+        if (muzzle != null)
+        {
+            return muzzle.forward;
+        }
+
+        return transform.forward;
     }
 
     public void ApplyRollRootMotion(Vector3 animatorDeltaPosition)

@@ -2158,6 +2158,8 @@ MonoBehaviour:
   loseTargetRange: 14
   patrolMoveSpeed: 1.5
   chaseMoveSpeed: 3.5
+  hitSlowMultiplier: 0.4
+  hitSlowDuration: 0.5
   patrolRadius: 8
   patrolWaitTime: {x: 1, y: 3}
   patrolSampleDistance: 3
@@ -2298,7 +2300,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db851c7513bbf4b4e842ccf58d20ba5b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  maxHealth: 100
+  maxHealth: 200
   destroyDelay: 3
 --- !u!114 &1037803550
 MonoBehaviour:
@@ -2317,6 +2319,8 @@ MonoBehaviour:
   loseTargetRange: 14
   patrolMoveSpeed: 2
   chaseMoveSpeed: 3
+  hitSlowMultiplier: 0.4
+  hitSlowDuration: 0.5
   patrolRadius: 8
   patrolWaitTime: {x: 1, y: 3}
   patrolSampleDistance: 3
@@ -2630,7 +2634,7 @@ PrefabInstance:
     - target: {fileID: 919132149155446097, guid: 1cb6e15523d87c9428d9a16558157fac,
         type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 1082271958561512970, guid: 1cb6e15523d87c9428d9a16558157fac,
         type: 3}

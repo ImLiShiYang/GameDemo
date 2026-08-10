@@ -13,6 +13,9 @@ public class EnemyAnimationController : MonoBehaviour
     private static readonly int AttackHash =
         Animator.StringToHash("Attack");
 
+    private static readonly int HitHash =
+        Animator.StringToHash("Hit");
+
     private static readonly int DeadHash =
         Animator.StringToHash("Dead");
 
@@ -33,38 +36,35 @@ public class EnemyAnimationController : MonoBehaviour
     private void OnEnable()
     {
         if (health != null)
+        {
+            health.Damaged += PlayHit;
             health.Died += PlayDeath;
+        }
     }
 
     private void OnDisable()
     {
         if (health != null)
-            health.Died -= PlayDeath;
-    }
-
-    private void Update()
-    {
-        if (isDead || animator == null)
-            return;
-
-        float speed = 0f;
-
-        if (agent != null &&
-            agent.enabled &&
-            agent.isOnNavMesh)
         {
-            speed = agent.velocity.magnitude;
+            health.Damaged -= PlayHit;
+            health.Died -= PlayDeath;
         }
-
-        animator.SetFloat(SpeedHash, speed);
     }
+    
+    
 
-    public void PlayAttack()
+    private void PlayHit(DamageInfo damageInfo)
     {
-        if (isDead || animator == null)
+        // Health raises Damaged before Died. Skip the regular reaction on a lethal hit
+        // so that the hit state cannot compete with the death animation.
+        if (isDead || health.CurrentHealth <= 0f || animator == null)
             return;
 
-        animator.SetTrigger(AttackHash);
+        // Cancel a queued attack, then reset and set Hit so rapid consecutive hits
+        // can restart the reaction animation.
+        animator.ResetTrigger(AttackHash);
+        animator.ResetTrigger(HitHash);
+        animator.SetTrigger(HitHash);
     }
 
     public void PlayDeath()
@@ -77,6 +77,7 @@ public class EnemyAnimationController : MonoBehaviour
         // 先停止跑步参数，避免死亡动画和跑步动画竞争。
         animator.SetFloat(SpeedHash, 0f);
         animator.ResetTrigger(AttackHash);
+        animator.ResetTrigger(HitHash);
         animator.SetBool(DeadHash, true);
 
         // 停止 NavMeshAgent 移动。

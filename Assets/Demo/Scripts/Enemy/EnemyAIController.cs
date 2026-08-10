@@ -33,6 +33,16 @@ public class EnemyAIController : MonoBehaviour
     [SerializeField, Min(0f)]
     private float chaseMoveSpeed = 3.5f;
     
+    
+    [Header("受击减速")]
+    [Tooltip("受击时移动速度倍率。0.4 表示只剩正常速度的 40%。")]
+    [SerializeField, Range(0f, 1f)]
+    private float hitSlowMultiplier = 0.4f;
+
+    [Tooltip("受击减速持续时间。")]
+    [SerializeField, Min(0f)]
+    private float hitSlowDuration = 0.5f;
+    
     [Header("巡逻")]
     [Tooltip("以小怪出生点为中心的巡逻半径。")]
     [SerializeField, Min(0.1f)]
@@ -100,6 +110,7 @@ public class EnemyAIController : MonoBehaviour
     private float waitEndTime;
     private float nextAttackTime;
     private bool isWaiting;
+    private float hitSlowEndTime;
 
     private int speedHash;
     private int attackHash;
@@ -180,6 +191,9 @@ public class EnemyAIController : MonoBehaviour
                 break;
         }
 
+        // 根据受击状态更新真正移动速度
+        UpdateMoveSpeed();
+        
         UpdateMoveAnimation();
     }
 
@@ -239,6 +253,50 @@ public class EnemyAIController : MonoBehaviour
         }
     }
 
+    private void OnEnable()
+    {
+        if (health != null)
+        {
+            health.Damaged += OnDamaged;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (health != null)
+        {
+            health.Damaged -= OnDamaged;
+        }
+    }
+
+    private void OnDamaged(DamageInfo damageInfo)
+    {
+        // 致死伤害不用再处理减速
+        if (health == null || health.CurrentHealth <= 0f)
+        {
+            return;
+        }
+
+        // 每次受击都会重新刷新减速时间
+        hitSlowEndTime = Time.time + hitSlowDuration;
+    }
+    
+    private void UpdateMoveSpeed()
+    {
+        float multiplier =Time.time < hitSlowEndTime? hitSlowMultiplier: 1f;
+
+        switch (currentState)
+        {
+            case EnemyState.Patrol:
+                agent.speed = patrolMoveSpeed * multiplier;
+                break;
+
+            case EnemyState.Chase:
+                agent.speed = chaseMoveSpeed * multiplier;
+                break;
+        }
+    }
+    
     private void UpdateChase(float distanceToPlayer)
     {
         if (player == null || distanceToPlayer >= loseTargetRange)
