@@ -23,6 +23,10 @@ public class EnemyHomingProjectile : MonoBehaviour
     [SerializeField, Min(0f)]
     private float homingDuration = 2f;
 
+    [Header("碰撞")]
+    [SerializeField]
+    private LayerMask hitMask;
+    
     [Header("瞄准")]
     [Tooltip("目标没有 CharacterController 时，瞄准根节点上方的高度。")]
     [SerializeField]
@@ -32,6 +36,7 @@ public class EnemyHomingProjectile : MonoBehaviour
 
     private Rigidbody projectileRigidbody;
     private SphereCollider projectileCollider;
+    private TrailRenderer[] trailRenderers;
 
     private Transform target;
     private CharacterController targetCharacterController;
@@ -48,11 +53,14 @@ public class EnemyHomingProjectile : MonoBehaviour
 
     private bool initialized;
     private bool hasHit;
+    private float releaseTime;
+    private PooledObject pooledObject;
 
     private void Awake()
     {
         projectileRigidbody = GetComponent<Rigidbody>();
         projectileCollider = GetComponent<SphereCollider>();
+        trailRenderers = GetComponentsInChildren<TrailRenderer>(true);
 
         projectileRigidbody.useGravity = false;
         projectileRigidbody.isKinematic = true;
@@ -72,7 +80,7 @@ public class EnemyHomingProjectile : MonoBehaviour
                 this
             );
 
-            Destroy(gameObject);
+            ReleaseSelf();
             return;
         }
 
@@ -109,16 +117,38 @@ public class EnemyHomingProjectile : MonoBehaviour
 
         previousPosition = projectileRigidbody.position;
         homingEndTime = Time.time + homingDuration;
+        releaseTime = Time.time + lifeTime;
 
+        hasHit = false;
         initialized = true;
 
-        Destroy(gameObject, lifeTime);
+        ClearTrails();
+    }
+    
+    private bool IsInvinciblePlayer(Collider targetCollider)
+    {
+        if (targetCollider == null)
+        {
+            return false;
+        }
+
+        GrayboxPlayerController playerController =
+            targetCollider.GetComponentInParent<GrayboxPlayerController>();
+
+        return playerController != null &&
+               playerController.IsInvincible;
     }
 
     private void FixedUpdate()
     {
         if (!initialized || hasHit)
         {
+            return;
+        }
+
+        if (Time.time >= releaseTime)
+        {
+            ReleaseSelf();
             return;
         }
 
@@ -257,7 +287,7 @@ public class EnemyHomingProjectile : MonoBehaviour
             moveDirection,
             CastHits,
             travelDistance,
-            Physics.DefaultRaycastLayers,
+            hitMask,
             QueryTriggerInteraction.Ignore
         );
 
@@ -281,6 +311,13 @@ public class EnemyHomingProjectile : MonoBehaviour
             {
                 continue;
             }
+            
+            // 玩家处于无敌帧，飞弹忽略玩家并继续飞行
+            if (IsInvinciblePlayer(candidateCollider))
+            {
+                Debug.Log("魔法飞弹检测到玩家无敌帧，忽略碰撞，继续飞行");
+                continue;
+            }
 
             closestDistance =
                 candidate.distance;
@@ -298,15 +335,13 @@ public class EnemyHomingProjectile : MonoBehaviour
             hasHit ||
             other == null ||
             other.isTrigger ||
-            IsOwnerCollider(other))
+            IsOwnerCollider(other)||
+            IsInvinciblePlayer(other))
         {
             return;
         }
 
-        Vector3 hitPoint =
-            other.ClosestPoint(
-                projectileRigidbody.position
-            );
+        Vector3 hitPoint =other.ClosestPoint(projectileRigidbody.position);
 
         Vector3 hitNormal =
             -moveDirection;
@@ -337,29 +372,11 @@ public class EnemyHomingProjectile : MonoBehaviour
         {
             hitNormal.Normalize();
         }
+        
 
-        /*
-         * 玩家处于翻滚无敌帧时：
-         * 魔法弹消失，但不造成伤害。
-         */
-        GrayboxPlayerController playerController =
-            hitCollider.GetComponentInParent
-                <GrayboxPlayerController>();
+        IDamageable damageable =hitCollider.GetComponentInParent<IDamageable>();
 
-        if (playerController != null &&
-            playerController.IsInvincible)
-        {
-            Destroy(gameObject);
-            Debug.Log("玩家无敌帧");
-            return;
-        }
-
-        IDamageable damageable =
-            hitCollider.GetComponentInParent
-                <IDamageable>();
-
-        if (damageable != null &&
-            !damageable.IsDead)
+        if (damageable != null &&!damageable.IsDead)
         {
             DamageInfo damageInfo =
                 new DamageInfo(
@@ -375,7 +392,53 @@ public class EnemyHomingProjectile : MonoBehaviour
             );
         }
 
+        ReleaseSelf();
+    }
+
+    private void ReleaseSelf()
+    {
+        initialized = false;
+
+        if (pooledObject == null)
+        {
+            pooledObject = GetComponent<PooledObject>();
+        }
+
+        if (pooledObject != null)
+        {
+            pooledObject.Release();
+            return;
+        }
+
+        // 兼容未通过对象池创建的测试实例。
         Destroy(gameObject);
+    }
+
+    private void OnDisable()
+    {
+        ClearTrails();
+        target = null;
+        targetCharacterController = null;
+        owner = null;
+        damage = 0f;
+        initialized = false;
+        hasHit = false;
+    }
+
+    private void ClearTrails()
+    {
+        if (trailRenderers == null)
+        {
+            return;
+        }
+
+        foreach (TrailRenderer trailRenderer in trailRenderers)
+        {
+            if (trailRenderer != null)
+            {
+                trailRenderer.Clear();
+            }
+        }
     }
 
     private bool IsOwnerCollider(

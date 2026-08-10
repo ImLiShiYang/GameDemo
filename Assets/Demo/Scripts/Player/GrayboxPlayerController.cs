@@ -102,6 +102,9 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private CharacterController characterController;
     private Vector3 currentMoveDirection;
+    
+    private Quaternion weaponAimPivotBaseLocalRotation;
+    private bool hasWeaponAimPivotBaseRotation;
 
     // 缓存 RaycastNonAlloc 的结果，避免每帧创建新数组。
     private readonly RaycastHit[] aimHits = new RaycastHit[16];
@@ -113,6 +116,10 @@ public class GrayboxPlayerController : MonoBehaviour
     private Vector3 lastAimDirection;
     private bool hasLastAimDirection;
     private bool isMouseAimInsideDeadZone;
+    
+    private bool isHitStunned;
+
+    public bool IsHitStunned => isHitStunned;
 
     /// <summary>
     /// 枪口射线最终指向的世界坐标。
@@ -172,6 +179,12 @@ public class GrayboxPlayerController : MonoBehaviour
         {
             weaponAimPivot = ResolveWeaponAimPivot();
         }
+        if (weaponAimPivot != null)
+        {
+            weaponAimPivotBaseLocalRotation =weaponAimPivot.localRotation;
+
+            hasWeaponAimPivotBaseRotation = true;
+        }
 
         rollTriggerHash = Animator.StringToHash(rollTriggerName);
 
@@ -180,6 +193,33 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private void Update()
     {
+        /*
+         * 受击硬直期间禁止：
+         * WASD 移动
+         * 射击
+         * 翻滚
+         */
+        if (isHitStunned)
+        {
+            isFiring = false;
+
+            moveInputDirection = Vector3.zero;
+            currentMoveDirection = Vector3.zero;
+
+            ResetLocomotionAnimator();
+
+            /*
+             * SimpleMove(Vector3.zero) 不产生水平移动，
+             * 但 CharacterController 仍然可以正常处理重力。
+             */
+            if (characterController != null)
+            {
+                characterController.SimpleMove(Vector3.zero);
+            }
+
+            return;
+        }
+        
         // 每帧都读取移动输入，确保按下 space 的这一帧能获得正确方向。
         UpdateMoveInput();
 
@@ -205,7 +245,7 @@ public class GrayboxPlayerController : MonoBehaviour
     
     private void LateUpdate()
     {
-        if (!isRolling)
+        if (!isRolling && !isHitStunned)
         {
             // 先根据动画后的真实枪口方向更新瞄准点。
             UpdateAim();
@@ -251,6 +291,45 @@ public class GrayboxPlayerController : MonoBehaviour
             moveInputDirection,
             1f
         );
+    }
+    
+    public void PlayHitReaction()
+    {
+        if (animator == null)
+        {
+            return;
+        }
+
+        isHitStunned = true;
+
+        // 受击立即停止移动和射击
+        isFiring = false;
+        currentMoveDirection = Vector3.zero;
+        moveInputDirection = Vector3.zero;
+
+        // 如果正处于翻滚的非无敌阶段被打中，
+        // 直接中断翻滚状态。
+        isInvincible = false;
+
+        ResetLocomotionAnimator();
+        
+        // 防止枪的程序化旋转残留
+        ResetWeaponAimPivot();
+
+        animator.ResetTrigger("Hit");
+        animator.SetTrigger("Hit");
+    }
+    
+    /// <summary>
+    /// 由受击动画最后的 Animation Event 调用。
+    /// 恢复玩家操作。
+    /// </summary>
+    public void FinishHitReaction()
+    {
+        isHitStunned = false;
+
+        currentMoveDirection = Vector3.zero;
+        moveInputDirection = Vector3.zero;
     }
 
     /// <summary>
@@ -363,6 +442,8 @@ public class GrayboxPlayerController : MonoBehaviour
         isInvincible = false;
         
         nextRollAllowedTime = Time.time + rollCooldown;
+        
+        ResetWeaponAimPivot();
 
         animator.ResetTrigger(rollTriggerHash);
         animator.SetTrigger(rollTriggerHash);
@@ -815,6 +896,18 @@ public class GrayboxPlayerController : MonoBehaviour
         {
             return;
         }
+        
+        /*
+         * 非常重要：
+         * 每帧先恢复枪最初的挂载旋转。
+         *
+         * 防止 Hit / Roll / Locomotion 多次切换以后，
+         * Pitch 修正不断累积到枪的 LocalRotation 上。
+         */
+        if (hasWeaponAimPivotBaseRotation)
+        {
+            weaponAimPivot.localRotation =weaponAimPivotBaseLocalRotation;
+        }
 
         Vector3 currentWeaponDirection =
             weaponAimEnd.position -
@@ -837,6 +930,16 @@ public class GrayboxPlayerController : MonoBehaviour
 
         weaponAimPivot.rotation =
             pitchCorrection * weaponAimPivot.rotation;
+    }
+    
+    private void ResetWeaponAimPivot()
+    {
+        if (weaponAimPivot != null &&
+            hasWeaponAimPivotBaseRotation)
+        {
+            weaponAimPivot.localRotation =
+                weaponAimPivotBaseLocalRotation;
+        }
     }
 
     private void UpdateAimPointFromWeaponRay(Vector3 fallbackDirection)
@@ -1028,7 +1131,8 @@ public class GrayboxPlayerController : MonoBehaviour
             !isRolling &&
             showAimLine &&
             muzzle != null &&
-            HasAimPoint;
+            HasAimPoint &&
+            !isHitStunned;
 
         aimLine.enabled = shouldShow;
 

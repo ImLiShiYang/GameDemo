@@ -134,6 +134,16 @@ public class EnemyAIController : MonoBehaviour
         agent.stoppingDistance = attackRange * 0.85f;
 
         EnterPatrolState();
+
+        if (homingProjectilePrefab != null)
+        {
+            PoolManager poolManager = GameEntry.Pool;
+
+            if (poolManager != null)
+            {
+                poolManager.WarmEnemyProjectilePool(homingProjectilePrefab);
+            }
+        }
     }
 
     private void Update()
@@ -644,12 +654,24 @@ public class EnemyAIController : MonoBehaviour
                 Vector3.up
             );
 
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
         EnemyHomingProjectile projectile =
-            Instantiate(
+            poolManager.GetEnemyProjectile(
                 homingProjectilePrefab,
                 spawnPosition,
                 spawnRotation
             );
+
+        if (projectile == null)
+        {
+            return;
+        }
 
         /*
          * 把玩家 Transform、伤害和发射者传给追踪弹。

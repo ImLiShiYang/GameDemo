@@ -10,6 +10,10 @@ public class Projectile : MonoBehaviour
 
     [SerializeField]
     private float lifeTime = 3f;
+    
+    [Header("碰撞")]
+    [SerializeField]
+    private LayerMask hitMask;
 
     private static readonly RaycastHit[] CastHits = new RaycastHit[16];
 
@@ -19,15 +23,19 @@ public class Projectile : MonoBehaviour
 
     private Rigidbody projectileRigidbody;
     private SphereCollider projectileCollider;
+    private TrailRenderer[] trailRenderers;
     private Vector3 previousPosition;
 
     private bool initialized;
     private bool hasHit;
+    private float releaseTime;
+    private PooledObject pooledObject;
 
     private void Awake()
     {
         projectileRigidbody = GetComponent<Rigidbody>();
         projectileCollider = GetComponent<SphereCollider>();
+        trailRenderers = GetComponentsInChildren<TrailRenderer>(true);
 
         projectileRigidbody.useGravity = false;
         projectileRigidbody.isKinematic = true;
@@ -42,24 +50,32 @@ public class Projectile : MonoBehaviour
         if (direction.sqrMagnitude < 0.001f)
         {
             Debug.LogWarning("Projectile received an invalid movement direction.");
-            Destroy(gameObject);
+            ReleaseSelf();
             return;
         }
 
         moveDirection = direction.normalized;
         damage = Mathf.Max(0f, damageAmount);
         owner = projectileOwner;
+        hasHit = false;
         initialized = true;
         previousPosition = projectileRigidbody.position;
+        releaseTime = Time.time + lifeTime;
 
+        ClearTrails();
         transform.forward = moveDirection;
-        Destroy(gameObject, lifeTime);
     }
 
     private void FixedUpdate()
     {
         if (!initialized || hasHit)
         {
+            return;
+        }
+
+        if (Time.time >= releaseTime)
+        {
+            ReleaseSelf();
             return;
         }
 
@@ -115,7 +131,7 @@ public class Projectile : MonoBehaviour
             moveDirection,
             CastHits,
             travelDistance,
-            Physics.DefaultRaycastLayers,
+            hitMask,
             QueryTriggerInteraction.Ignore);
 
         float closestDistance = float.PositiveInfinity;
@@ -173,7 +189,51 @@ public class Projectile : MonoBehaviour
             damageable.TakeDamage(damageInfo);
         }
 
+        ReleaseSelf();
+    }
+
+    private void ReleaseSelf()
+    {
+        initialized = false;
+
+        if (pooledObject == null)
+        {
+            pooledObject = GetComponent<PooledObject>();
+        }
+
+        if (pooledObject != null)
+        {
+            pooledObject.Release();
+            return;
+        }
+
+        // 兼容未通过对象池创建的测试实例。
         Destroy(gameObject);
+    }
+
+    private void OnDisable()
+    {
+        ClearTrails();
+        initialized = false;
+        hasHit = false;
+        owner = null;
+        damage = 0f;
+    }
+
+    private void ClearTrails()
+    {
+        if (trailRenderers == null)
+        {
+            return;
+        }
+
+        foreach (TrailRenderer trailRenderer in trailRenderers)
+        {
+            if (trailRenderer != null)
+            {
+                trailRenderer.Clear();
+            }
+        }
     }
 
     private bool IsOwnerCollider(Collider targetCollider)

@@ -50,6 +50,19 @@ public class GamePlayerAttack : MonoBehaviour
         muzzleFlashEffect.SetActive(false);
     }
 
+    private void Start()
+    {
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        poolManager.WarmBulletPool(projectilePrefab);
+        poolManager.WarmVFXPool(muzzleFlashEffect);
+    }
+
     public void TryAttack(Vector3 aimPoint)
     {
         if (Time.time < nextAttackTime)
@@ -78,7 +91,23 @@ public class GamePlayerAttack : MonoBehaviour
 
         nextAttackTime = Time.time + attackInterval;
 
-        Projectile projectile = Instantiate(projectilePrefab,muzzle.position,Quaternion.LookRotation(direction.normalized));
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        Projectile projectile = poolManager.GetBullet(
+            projectilePrefab,
+            muzzle.position,
+            Quaternion.LookRotation(direction.normalized)
+        );
+
+        if (projectile == null)
+        {
+            return;
+        }
 
         projectile.Initialize(direction, damage, gameObject);
 
@@ -123,20 +152,36 @@ public class GamePlayerAttack : MonoBehaviour
             return;
         }
 
-        GameObject effectInstance = Instantiate(
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        Transform templateTransform = muzzleFlashEffect.transform;
+
+        GameObject effectInstance = poolManager.GetVFX(
             muzzleFlashEffect,
-            muzzleFlashEffect.transform.parent);
+            templateTransform.position,
+            templateTransform.rotation,
+            muzzleFlashLifetime,
+            templateTransform.parent
+        );
+
+        if (effectInstance == null)
+        {
+            return;
+        }
 
         Transform effectTransform = effectInstance.transform;
-        Transform templateTransform = muzzleFlashEffect.transform;
 
         effectTransform.SetLocalPositionAndRotation(
             templateTransform.localPosition,
             templateTransform.localRotation);
         effectTransform.localScale = templateTransform.localScale;
 
-        effectInstance.SetActive(true);
-        Destroy(effectInstance, muzzleFlashLifetime);
+        // GetVFX 已经激活实例，并会在 muzzleFlashLifetime 后自动回池。
     }
 
     private void InitializeShotAudio()

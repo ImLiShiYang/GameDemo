@@ -117,6 +117,19 @@ public class DamageFeedback : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        poolManager.WarmDamageNumberPool(damageNumberPrefab);
+        poolManager.WarmVFXPool(hitEffectPrefab);
+    }
+
     private void OnEnable()
     {
         health.Damaged += OnDamaged;
@@ -314,29 +327,40 @@ public class DamageFeedback : MonoBehaviour
             damageInfo.HitPoint +
             hitNormal * hitEffectSurfaceOffset;
 
-        GameObject effect = Instantiate(
-            hitEffectPrefab,
-            spawnPosition,
-            rotation
-        );
-
         bool hasBulletHole =
-            effect.GetComponentInChildren<FPS_Decal>() != null;
-
-        if (hasBulletHole)
-        {
-            foreach (FPSShaderColorGradient gradient in
-                     effect.GetComponentsInChildren<FPSShaderColorGradient>())
-            {
-                gradient.enabled = false;
-            }
-        }
+            hitEffectPrefab.GetComponentInChildren<FPS_Decal>(true) != null;
 
         float lifeTime = hasBulletHole
             ? bulletHoleLifeTime
             : hitEffectLifeTime;
 
-        Destroy(effect, lifeTime);
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        GameObject effect = poolManager.GetVFX(
+            hitEffectPrefab,
+            spawnPosition,
+            rotation,
+            lifeTime
+        );
+
+        if (effect == null)
+        {
+            return;
+        }
+
+        if (hasBulletHole)
+        {
+            foreach (FPSShaderColorGradient gradient in
+                     effect.GetComponentsInChildren<FPSShaderColorGradient>(true))
+            {
+                gradient.enabled = false;
+            }
+        }
     }
 
     private Vector3 ResolveHitNormal(DamageInfo damageInfo)
@@ -369,11 +393,23 @@ public class DamageFeedback : MonoBehaviour
             damageInfo.HitPoint +
             hitNormal * damageNumberSurfaceOffset;
 
-        DamageNumber damageNumber = Instantiate(
+        PoolManager poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        DamageNumber damageNumber = poolManager.GetDamageNumber(
             damageNumberPrefab,
             spawnPosition,
             Quaternion.identity
         );
+
+        if (damageNumber == null)
+        {
+            return;
+        }
 
         damageNumber.Initialize(damageInfo.Amount);
     }
