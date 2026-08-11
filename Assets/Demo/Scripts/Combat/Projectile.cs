@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 [RequireComponent(typeof(SphereCollider))]
 [RequireComponent(typeof(Rigidbody))]
@@ -30,6 +31,10 @@ public class Projectile : MonoBehaviour
     private bool hasHit;
     private float releaseTime;
     private PooledObject pooledObject;
+    
+    private int remainingPierces;
+
+    private readonly HashSet<IDamageable> hitDamageables =new HashSet<IDamageable>();
 
     private void Awake()
     {
@@ -42,27 +47,45 @@ public class Projectile : MonoBehaviour
         previousPosition = projectileRigidbody.position;
     }
 
-    public void Initialize(
-        Vector3 direction,
-        float damageAmount,
-        GameObject projectileOwner)
+    public void Initialize(Vector3 direction,float damageAmount,GameObject projectileOwner,int pierceCount = 0)
     {
         if (direction.sqrMagnitude < 0.001f)
         {
-            Debug.LogWarning("Projectile received an invalid movement direction.");
+            Debug.LogWarning(
+                "Projectile received an invalid movement direction."
+            );
+
             ReleaseSelf();
+
             return;
         }
 
         moveDirection = direction.normalized;
-        damage = Mathf.Max(0f, damageAmount);
+
+        damage = Mathf.Max(
+            0f,
+            damageAmount
+        );
+
         owner = projectileOwner;
+
+        remainingPierces =
+            Mathf.Max(0, pierceCount);
+
+        hitDamageables.Clear();
+
         hasHit = false;
+
         initialized = true;
-        previousPosition = projectileRigidbody.position;
-        releaseTime = Time.time + lifeTime;
+
+        previousPosition =
+            projectileRigidbody.position;
+
+        releaseTime =
+            Time.time + lifeTime;
 
         ClearTrails();
+
         transform.forward = moveDirection;
     }
 
@@ -140,6 +163,13 @@ public class Projectile : MonoBehaviour
         {
             RaycastHit candidate = CastHits[index];
             Collider candidateCollider = candidate.collider;
+            
+            IDamageable candidateDamageable =candidateCollider.GetComponentInParent<IDamageable>();
+
+            if (candidateDamageable != null &&hitDamageables.Contains(candidateDamageable))
+            {
+                continue;
+            }
 
             if (candidateCollider == null ||
                 candidateCollider == projectileCollider ||
@@ -158,12 +188,12 @@ public class Projectile : MonoBehaviour
 
     private void HandleHit(Collider hitCollider,Vector3 hitPoint,Vector3 hitNormal)
     {
-        if (hasHit || hitCollider == null || IsOwnerCollider(hitCollider))
+        if (hasHit ||
+            hitCollider == null ||
+            IsOwnerCollider(hitCollider))
         {
             return;
         }
-
-        hasHit = true;
 
         if (hitNormal.sqrMagnitude < 0.0001f)
         {
@@ -177,17 +207,65 @@ public class Projectile : MonoBehaviour
         IDamageable damageable =
             hitCollider.GetComponentInParent<IDamageable>();
 
-        if (damageable != null && !damageable.IsDead)
+        /*
+         * 撞到墙壁、地面等非伤害对象：
+         * 直接结束。
+         */
+        if (damageable == null)
         {
-            DamageInfo damageInfo = new DamageInfo(
+            hasHit = true;
+            ReleaseSelf();
+
+            return;
+        }
+
+        /*
+         * 同一个敌人已经被当前子弹命中过。
+         */
+        if (hitDamageables.Contains(damageable))
+        {
+            return;
+        }
+
+        /*
+         * 死亡目标第一版仍然视为阻挡。
+         */
+        if (damageable.IsDead)
+        {
+            hasHit = true;
+            ReleaseSelf();
+
+            return;
+        }
+
+        hitDamageables.Add(damageable);
+
+        DamageInfo damageInfo =
+            new DamageInfo(
                 damage,
                 owner,
                 hitPoint,
                 moveDirection,
-                hitNormal);
+                hitNormal
+            );
 
-            damageable.TakeDamage(damageInfo);
+        damageable.TakeDamage(damageInfo);
+
+        /*
+         * 还有穿透次数：
+         * 不回对象池，让子弹继续向前飞。
+         */
+        if (remainingPierces > 0)
+        {
+            remainingPierces--;
+
+            return;
         }
+
+        /*
+         * 没有穿透次数了。
+         */
+        hasHit = true;
 
         ReleaseSelf();
     }
@@ -218,6 +296,8 @@ public class Projectile : MonoBehaviour
         hasHit = false;
         owner = null;
         damage = 0f;
+        remainingPierces = 0;
+        hitDamageables.Clear();
     }
 
     private void ClearTrails()

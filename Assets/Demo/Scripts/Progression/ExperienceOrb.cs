@@ -122,8 +122,7 @@ public class ExperienceOrb : MonoBehaviour
          *
          * 目前没有放进池子则直接 Destroy。
          */
-        PooledObject pooledObject =
-            GetComponent<PooledObject>();
+        PooledObject pooledObject =GetComponent<PooledObject>();
 
         if (pooledObject != null)
         {

@@ -126,6 +126,7 @@ public class EnemyAIController : MonoBehaviour
         attackHash = Animator.StringToHash(attackParameter);
         attackStateHash = Animator.StringToHash(attackStateName);
     }
+    
     public void ResetForReuse()
     {
         enabled = true;

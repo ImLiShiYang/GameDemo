@@ -73,8 +73,8 @@ public class PlayerExperience : MonoBehaviour
          *
          * 后面可以换成配置表。
          */
-        experienceToNextLevel =
-            Mathf.CeilToInt(experienceToNextLevel * 1.25f);
+        experienceToNextLevel =Mathf.CeilToInt(experienceToNextLevel * 1.25f);
+            
 
         Debug.Log(
             $"玩家升级！当前等级：{level}",
