@@ -24,10 +24,21 @@ public class EnemyExperienceDrop : MonoBehaviour
     private Transform player;
 
     private PlayerExperience playerExperience;
+    private PoolManager poolManager;
 
     private void Awake()
     {
         health = GetComponent<Health>();
+    }
+
+    private void Start()
+    {
+        poolManager = GameEntry.Pool;
+
+        if (poolManager != null && experienceOrbPrefab != null)
+        {
+            poolManager.WarmExperienceOrbPool(experienceOrbPrefab);
+        }
     }
 
     private void OnEnable()
@@ -106,11 +117,26 @@ public class EnemyExperienceDrop : MonoBehaviour
                 randomOffset.y
             );
 
-        ExperienceOrb orb = Instantiate(
-            experienceOrbPrefab,
-            spawnPosition,
-            Quaternion.identity
-        );
+        if (poolManager == null)
+        {
+            poolManager = GameEntry.Pool;
+        }
+
+        ExperienceOrb orb = poolManager != null
+            ? poolManager.GetExperienceOrb(
+                experienceOrbPrefab,
+                spawnPosition,
+                Quaternion.identity)
+            : Instantiate(
+                experienceOrbPrefab,
+                spawnPosition,
+                Quaternion.identity);
+
+        if (orb == null)
+        {
+            Debug.LogWarning("Experience orb pool could not provide an instance.", this);
+            return;
+        }
 
         orb.Initialize(
             player,

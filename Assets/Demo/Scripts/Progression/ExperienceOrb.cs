@@ -38,6 +38,15 @@ public class ExperienceOrb : MonoBehaviour
 
     private float currentMoveSpeed;
 
+    private void OnDisable()
+    {
+        player = null;
+        playerExperience = null;
+        experienceAmount = 0;
+        isAttracted = false;
+        currentMoveSpeed = startMoveSpeed;
+    }
+
     /// <summary>
     /// 经验球生成后进行初始化。
     /// </summary>

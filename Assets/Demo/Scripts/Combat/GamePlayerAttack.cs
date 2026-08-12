@@ -77,6 +77,11 @@ public class GamePlayerAttack : MonoBehaviour
     /// </summary>
     public void TryAttack(Vector3 aimPoint)
     {
+        if (Time.timeScale <= 0f)
+        {
+            return;
+        }
+
         // 还没到下一次允许攻击的时间，直接返回。
         if (Time.time < nextAttackTime)
         {

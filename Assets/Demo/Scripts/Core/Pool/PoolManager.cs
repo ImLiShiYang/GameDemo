@@ -20,6 +20,10 @@ public class PoolManager : MonoBehaviour
     [SerializeField, Min(0)] private int damageNumberPrewarmCount = 20;
     [SerializeField, Min(1)] private int damageNumberMaxSize = 64;
 
+    [Header("Experience Orb Pool")]
+    [SerializeField, Min(0)] private int experienceOrbPrewarmCount = 20;
+    [SerializeField, Min(1)] private int experienceOrbMaxSize = 128;
+
     [Header("VFX Pool")]
 
     [Header("Enemy Pool")]
@@ -32,6 +36,7 @@ public class PoolManager : MonoBehaviour
     private Transform enemyProjectileRoot;
     private Transform enemyRoot;
     private Transform damageNumberRoot;
+    private Transform experienceOrbRoot;
     private Transform vfxRoot;
 
     private GameObjectPool bulletPool;
@@ -42,6 +47,9 @@ public class PoolManager : MonoBehaviour
 
     private GameObjectPool damageNumberPool;
     private GameObject damageNumberPrefabKey;
+
+    private GameObjectPool experienceOrbPool;
+    private GameObject experienceOrbPrefabKey;
     private readonly Dictionary<GameObject, GameObjectPool> enemyPools = new();
 
     private readonly Dictionary<GameObject, GameObjectPool> vfxPools = new();
@@ -53,6 +61,7 @@ public class PoolManager : MonoBehaviour
         enemyRoot = CreateCategoryRoot("Enemy Pool");
         damageNumberRoot = CreateCategoryRoot("DamageNumber Pool");
         vfxRoot = CreateCategoryRoot("VFX Pool");
+        experienceOrbRoot = CreateCategoryRoot("ExperienceOrb Pool");
     }
 
 
@@ -110,6 +119,24 @@ public class PoolManager : MonoBehaviour
         );
     }
 
+
+    public void WarmExperienceOrbPool(ExperienceOrb prefab)
+    {
+        if (prefab == null)
+        {
+            return;
+        }
+
+        EnsureSinglePrefabPool(
+            ref experienceOrbPool,
+            ref experienceOrbPrefabKey,
+            prefab.gameObject,
+            experienceOrbRoot,
+            experienceOrbPrewarmCount,
+            experienceOrbMaxSize,
+            "ExperienceOrb Pool"
+        );
+    }
     public void WarmVFXPool(GameObject prefab)
     {
         if (prefab == null)
@@ -223,6 +250,35 @@ public class PoolManager : MonoBehaviour
         return damageNumberPool
             .Get(position, rotation)
             .GetComponent<DamageNumber>();
+    }
+
+    public ExperienceOrb GetExperienceOrb(
+        ExperienceOrb prefab,
+        Vector3 position,
+        Quaternion rotation)
+    {
+        if (prefab == null)
+        {
+            Debug.LogError("GetExperienceOrb received a null prefab.", this);
+            return null;
+        }
+
+        if (!EnsureSinglePrefabPool(
+                ref experienceOrbPool,
+                ref experienceOrbPrefabKey,
+                prefab.gameObject,
+                experienceOrbRoot,
+                experienceOrbPrewarmCount,
+                experienceOrbMaxSize,
+                "ExperienceOrb Pool"))
+        {
+            return null;
+        }
+
+        return experienceOrbPool
+            .Get(position, rotation)
+            .GetComponent<ExperienceOrb>();
+
     }
 
     /// <summary>

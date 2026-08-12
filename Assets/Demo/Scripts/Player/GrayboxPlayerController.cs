@@ -113,6 +113,7 @@ public class GrayboxPlayerController : MonoBehaviour
     private Material aimLineMaterial;
 
     private bool isFiring;
+    private bool waitForPrimaryFireRelease;
     private Vector3 lastAimDirection;
     private bool hasLastAimDirection;
     private bool isMouseAimInsideDeadZone;
@@ -193,6 +194,21 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private void Update()
     {
+        if (Time.timeScale <= 0f)
+        {
+            isFiring = false;
+            waitForPrimaryFireRelease = true;
+            moveInputDirection = Vector3.zero;
+            currentMoveDirection = Vector3.zero;
+            ResetLocomotionAnimator();
+            return;
+        }
+
+        if (waitForPrimaryFireRelease && !Input.GetMouseButton(0))
+        {
+            waitForPrimaryFireRelease = false;
+        }
+
         /*
          * 受击硬直期间禁止：
          * WASD 移动
@@ -224,7 +240,10 @@ public class GrayboxPlayerController : MonoBehaviour
         UpdateMoveInput();
 
         // 翻滚时不允许开枪。
-        isFiring = !isRolling && Input.GetMouseButton(0);
+        isFiring =
+            !isRolling &&
+            !waitForPrimaryFireRelease &&
+            Input.GetMouseButton(0);
 
         if (!isRolling && Input.GetKeyDown(rollKey))
         {
@@ -245,6 +264,12 @@ public class GrayboxPlayerController : MonoBehaviour
     
     private void LateUpdate()
     {
+        if (Time.timeScale <= 0f)
+        {
+            isFiring = false;
+            return;
+        }
+
         if (!isRolling && !isHitStunned)
         {
             // 先根据动画后的真实枪口方向更新瞄准点。

@@ -2,28 +2,49 @@ using UnityEngine;
 
 /// <summary>
 /// 游戏全局模块入口。
-/// 当前先统一暴露对象池，后续 AudioManager、UIManager 等模块也可以继续挂在这里。
+/// 当前统一管理：
+/// PoolManager
+/// UIManager
 /// </summary>
 public class GameEntry : MonoBehaviour
 {
-    public static GameEntry Instance { get; private set; }
+    public static GameEntry Instance
+    {
+        get;
+        private set;
+    }
+
+    [Header("Managers")]
 
     [SerializeField]
     private PoolManager poolManager;
 
+    [SerializeField]
+    private UIManager uiManager;
+
+    /// <summary>
+    /// 全局对象池入口。
+    /// </summary>
     public static PoolManager Pool
     {
         get
         {
             if (Instance == null)
             {
-                Debug.LogError("场景中没有 GameEntry，请先创建 GameEntry 根对象并挂载 GameEntry 组件。");
+                Debug.LogError(
+                    "场景中没有 GameEntry。"
+                );
+
                 return null;
             }
 
             if (Instance.poolManager == null)
             {
-                Debug.LogError("GameEntry 没有找到 PoolManager，请在 GameEntry 子物体上挂载 PoolManager。", Instance);
+                Debug.LogError(
+                    "GameEntry 没有找到 PoolManager。",
+                    Instance
+                );
+
                 return null;
             }
 
@@ -31,26 +52,82 @@ public class GameEntry : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 全局 UI 管理器入口。
+    /// </summary>
+    public static UIManager UI
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError(
+                    "场景中没有 GameEntry。"
+                );
+
+                return null;
+            }
+
+            if (Instance.uiManager == null)
+            {
+                Debug.LogError(
+                    "GameEntry 没有找到 UIManager。",
+                    Instance
+                );
+
+                return null;
+            }
+
+            return Instance.uiManager;
+        }
+    }
+
     private void Awake()
     {
         if (Instance != null && Instance != this)
         {
-            Debug.LogError("场景中存在多个 GameEntry，只允许保留一个。", this);
+            Debug.LogError(
+                "场景中存在多个 GameEntry，只允许保留一个。",
+                this
+            );
+
             Destroy(gameObject);
+
             return;
         }
 
         Instance = this;
 
+        // 自动寻找 PoolManager。
         if (poolManager == null)
         {
-            poolManager = GetComponentInChildren<PoolManager>(true);
+            poolManager =
+                GetComponentInChildren<PoolManager>(
+                    true
+                );
+        }
+
+        // 自动寻找 UIManager。
+        if (uiManager == null)
+        {
+            uiManager =
+                GetComponentInChildren<UIManager>(
+                    true
+                );
         }
 
         if (poolManager == null)
         {
             Debug.LogError(
-                "GameEntry 下没有找到 PoolManager。请创建子物体 PoolManager 并挂载 PoolManager 组件。",
+                "GameEntry 下没有找到 PoolManager。",
+                this
+            );
+        }
+
+        if (uiManager == null)
+        {
+            Debug.LogError(
+                "GameEntry 下没有找到 UIManager。",
                 this
             );
         }

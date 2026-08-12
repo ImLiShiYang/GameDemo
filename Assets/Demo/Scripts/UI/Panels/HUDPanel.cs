@@ -1,0 +1,537 @@
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+
+public enum HUDSkillSlot
+{
+    Roll,
+    Q,
+    E
+}
+
+public class HUDOpenArgs
+{
+    public Health PlayerHealth;
+    public PlayerExperience PlayerExperience;
+}
+
+public class UIBuffData
+{
+    public string Id;
+    public Sprite Icon;
+    public int Stack = 1;
+
+    /// <summary>
+    /// 0 = 即将结束，1 = 剩余完整时长。
+    /// </summary>
+    public float NormalizedRemaining = 1f;
+}
+
+/// <summary>
+/// 战斗 HUD。
+///
+/// 当前直接绑定：
+/// Health
+/// PlayerExperience
+///
+/// 另外提供：
+/// Roll/Q/E 冷却显示
+/// 波次显示
+/// Buff 显示
+/// Boss 血条
+/// </summary>
+public class HUDPanel : UIBase
+{
+    [Header("Player Health")]
+    [SerializeField]
+    private Slider healthSlider;
+
+    [SerializeField]
+    private TMP_Text healthText;
+
+    [Header("Experience")]
+    [SerializeField]
+    private Slider experienceSlider;
+
+    [SerializeField]
+    private TMP_Text levelText;
+
+    [SerializeField]
+    private TMP_Text experienceText;
+
+    [Header("Cooldown - Image Type = Filled")]
+    [SerializeField]
+    private Image rollCooldownFill;
+
+    [SerializeField]
+    private Image qCooldownFill;
+
+    [SerializeField]
+    private Image eCooldownFill;
+
+    [Header("Wave")]
+    [SerializeField]
+    private TMP_Text waveText;
+
+    [Header("Boss")]
+    [SerializeField]
+    private GameObject bossRoot;
+
+    [SerializeField]
+    private TMP_Text bossNameText;
+
+    [SerializeField]
+    private Slider bossHealthSlider;
+
+    [SerializeField]
+    private TMP_Text bossHealthText;
+
+    [Header("Buff")]
+    [SerializeField]
+    private Transform buffRoot;
+
+    [SerializeField]
+    private UIBuffItem buffItemPrefab;
+
+    private Health playerHealth;
+    private PlayerExperience playerExperience;
+
+    private Health bossHealth;
+
+    private readonly Dictionary<string, UIBuffItem> buffItems =
+        new Dictionary<string, UIBuffItem>();
+
+    protected override void OnInit()
+    {
+        if (bossRoot != null)
+        {
+            bossRoot.SetActive(false);
+        }
+
+        SetCooldown(HUDSkillSlot.Roll, 0f);
+        SetCooldown(HUDSkillSlot.Q, 0f);
+        SetCooldown(HUDSkillSlot.E, 0f);
+
+        SetWave(0, 0);
+    }
+
+    protected override void OnOpen(object args)
+    {
+        BindFromArgs(args);
+    }
+
+    protected override void OnRefresh(object args)
+    {
+        BindFromArgs(args);
+    }
+
+    protected override void OnClose()
+    {
+        UnbindPlayer();
+        UnbindBoss();
+    }
+
+    private void BindFromArgs(object args)
+    {
+        HUDOpenArgs openArgs = args as HUDOpenArgs;
+
+        if (openArgs == null)
+        {
+            RefreshPlayerHealth();
+            RefreshExperience();
+            return;
+        }
+
+        BindPlayer(
+            openArgs.PlayerHealth,
+            openArgs.PlayerExperience
+        );
+    }
+
+    public void BindPlayer(
+        Health health,
+        PlayerExperience experience)
+    {
+        UnbindPlayer();
+
+        playerHealth = health;
+        playerExperience = experience;
+
+        if (playerHealth != null)
+        {
+            playerHealth.Damaged += HandlePlayerDamaged;
+            playerHealth.Died += HandlePlayerDied;
+        }
+
+        if (playerExperience != null)
+        {
+            playerExperience.ExperienceChanged +=
+                HandleExperienceChanged;
+
+            playerExperience.LeveledUp +=
+                HandleLevelUp;
+        }
+
+        RefreshPlayerHealth();
+        RefreshExperience();
+    }
+
+    private void UnbindPlayer()
+    {
+        if (playerHealth != null)
+        {
+            playerHealth.Damaged -= HandlePlayerDamaged;
+            playerHealth.Died -= HandlePlayerDied;
+        }
+
+        if (playerExperience != null)
+        {
+            playerExperience.ExperienceChanged -=
+                HandleExperienceChanged;
+
+            playerExperience.LeveledUp -=
+                HandleLevelUp;
+        }
+
+        playerHealth = null;
+        playerExperience = null;
+    }
+
+    private void HandlePlayerDamaged(
+        DamageInfo damageInfo)
+    {
+        RefreshPlayerHealth();
+    }
+
+    private void HandlePlayerDied()
+    {
+        RefreshPlayerHealth();
+    }
+
+    private void RefreshPlayerHealth()
+    {
+        if (playerHealth == null)
+        {
+            if (healthSlider != null)
+            {
+                healthSlider.value = 0f;
+            }
+
+            if (healthText != null)
+            {
+                healthText.text = "-- / --";
+            }
+
+            return;
+        }
+
+        float current =
+            playerHealth.CurrentHealth;
+
+        float max =
+            playerHealth.MaxHealth;
+
+        if (healthSlider != null)
+        {
+            healthSlider.value =
+                max > 0f
+                    ? current / max
+                    : 0f;
+        }
+
+        if (healthText != null)
+        {
+            healthText.text =
+                $"{Mathf.CeilToInt(current)} / " +
+                $"{Mathf.CeilToInt(max)}";
+        }
+    }
+
+    private void HandleExperienceChanged(
+        int current,
+        int required)
+    {
+        RefreshExperience();
+    }
+
+    private void HandleLevelUp(int newLevel)
+    {
+        RefreshExperience();
+    }
+
+    private void RefreshExperience()
+    {
+        if (playerExperience == null)
+        {
+            if (experienceSlider != null)
+            {
+                experienceSlider.value = 0f;
+            }
+
+            if (levelText != null)
+            {
+                levelText.text = "Lv.--";
+            }
+
+            if (experienceText != null)
+            {
+                experienceText.text = "-- / --";
+            }
+
+            return;
+        }
+
+        int current =
+            playerExperience.CurrentExperience;
+
+        int required =
+            playerExperience.ExperienceToNextLevel;
+
+        int level =
+            playerExperience.Level;
+
+        if (experienceSlider != null)
+        {
+            experienceSlider.value =
+                required > 0
+                    ? (float)current / required
+                    : 0f;
+        }
+
+        if (levelText != null)
+        {
+            levelText.text =
+                $"Lv.{level}";
+        }
+
+        if (experienceText != null)
+        {
+            experienceText.text =
+                $"{current} / {required}";
+        }
+    }
+
+    /// <summary>
+    /// normalizedRemaining：
+    /// 1 = 刚进入冷却
+    /// 0 = 冷却结束
+    /// </summary>
+    public void SetCooldown(
+        HUDSkillSlot slot,
+        float normalizedRemaining)
+    {
+        float value =
+            Mathf.Clamp01(normalizedRemaining);
+
+        Image target = null;
+
+        switch (slot)
+        {
+            case HUDSkillSlot.Roll:
+                target = rollCooldownFill;
+                break;
+
+            case HUDSkillSlot.Q:
+                target = qCooldownFill;
+                break;
+
+            case HUDSkillSlot.E:
+                target = eCooldownFill;
+                break;
+        }
+
+        if (target != null)
+        {
+            target.fillAmount = value;
+        }
+    }
+
+    public void SetWave(
+        int currentWave,
+        int totalWave)
+    {
+        if (waveText == null)
+        {
+            return;
+        }
+
+        if (currentWave <= 0)
+        {
+            waveText.text = "Wave --";
+            return;
+        }
+
+        if (totalWave > 0)
+        {
+            waveText.text =
+                $"Wave {currentWave} / {totalWave}";
+        }
+        else
+        {
+            waveText.text =
+                $"Wave {currentWave}";
+        }
+    }
+
+    public void BindBoss(
+        string bossName,
+        Health health)
+    {
+        UnbindBoss();
+
+        bossHealth = health;
+
+        if (bossNameText != null)
+        {
+            bossNameText.text =
+                string.IsNullOrWhiteSpace(bossName)
+                    ? "BOSS"
+                    : bossName;
+        }
+
+        if (bossRoot != null)
+        {
+            bossRoot.SetActive(
+                bossHealth != null
+            );
+        }
+
+        if (bossHealth != null)
+        {
+            bossHealth.Damaged += HandleBossDamaged;
+            bossHealth.Died += HandleBossDied;
+        }
+
+        RefreshBossHealth();
+    }
+
+    public void UnbindBoss()
+    {
+        if (bossHealth != null)
+        {
+            bossHealth.Damaged -= HandleBossDamaged;
+            bossHealth.Died -= HandleBossDied;
+        }
+
+        bossHealth = null;
+
+        if (bossRoot != null)
+        {
+            bossRoot.SetActive(false);
+        }
+    }
+
+    private void HandleBossDamaged(
+        DamageInfo damageInfo)
+    {
+        RefreshBossHealth();
+    }
+
+    private void HandleBossDied()
+    {
+        RefreshBossHealth();
+
+        if (bossRoot != null)
+        {
+            bossRoot.SetActive(false);
+        }
+    }
+
+    private void RefreshBossHealth()
+    {
+        if (bossHealth == null)
+        {
+            return;
+        }
+
+        float current =
+            bossHealth.CurrentHealth;
+
+        float max =
+            bossHealth.MaxHealth;
+
+        if (bossHealthSlider != null)
+        {
+            bossHealthSlider.value =
+                max > 0f
+                    ? current / max
+                    : 0f;
+        }
+
+        if (bossHealthText != null)
+        {
+            bossHealthText.text =
+                $"{Mathf.CeilToInt(current)} / " +
+                $"{Mathf.CeilToInt(max)}";
+        }
+    }
+
+    public void SetBuff(UIBuffData data)
+    {
+        if (data == null ||
+            string.IsNullOrEmpty(data.Id) ||
+            buffRoot == null ||
+            buffItemPrefab == null)
+        {
+            return;
+        }
+
+        if (!buffItems.TryGetValue(
+                data.Id,
+                out UIBuffItem item) ||
+            item == null)
+        {
+            item = Instantiate(
+                buffItemPrefab,
+                buffRoot,
+                false
+            );
+
+            buffItems[data.Id] = item;
+        }
+
+        item.gameObject.SetActive(true);
+
+        item.SetData(
+            data.Icon,
+            Mathf.Max(1, data.Stack),
+            data.NormalizedRemaining
+        );
+    }
+
+    public void RemoveBuff(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return;
+        }
+
+        if (!buffItems.TryGetValue(
+                id,
+                out UIBuffItem item))
+        {
+            return;
+        }
+
+        buffItems.Remove(id);
+
+        if (item != null)
+        {
+            Destroy(item.gameObject);
+        }
+    }
+
+    public void ClearBuffs()
+    {
+        foreach (UIBuffItem item in buffItems.Values)
+        {
+            if (item != null)
+            {
+                Destroy(item.gameObject);
+            }
+        }
+
+        buffItems.Clear();
+    }
+}
