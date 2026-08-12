@@ -55,13 +55,31 @@ public class EnemyAnimationController : MonoBehaviour
 
     private void PlayHit(DamageInfo damageInfo)
     {
-        // Health raises Damaged before Died. Skip the regular reaction on a lethal hit
-        // so that the hit state cannot compete with the death animation.
+        // 致命伤害交给死亡动画处理。
         if (isDead || health.CurrentHealth <= 0f || animator == null)
             return;
 
-        // Cancel a queued attack, then reset and set Hit so rapid consecutive hits
-        // can restart the reaction animation.
+        AnimatorStateInfo currentState =
+            animator.GetCurrentAnimatorStateInfo(0);
+
+        bool isEnteringAttack =
+            animator.IsInTransition(0) &&
+            animator.GetNextAnimatorStateInfo(0)
+                .IsName("Attack");
+
+        bool isPlayingAttack =
+            currentState.IsName("Attack");
+
+        /*
+         * 攻击霸体：
+         * 已经进入攻击状态或正在切入攻击状态时，
+         * 仍然受到伤害，但不播放 Hit，也不取消攻击。
+         */
+        if (isPlayingAttack || isEnteringAttack)
+        {
+            return;
+        }
+        
         animator.ResetTrigger(AttackHash);
         animator.ResetTrigger(HitHash);
         animator.SetTrigger(HitHash);

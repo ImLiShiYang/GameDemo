@@ -74,6 +74,9 @@ public class HUDPanel : UIBase
     [SerializeField]
     private TMP_Text waveText;
 
+    [SerializeField]
+    private TMP_Text enemyCountText;
+
     [Header("Boss")]
     [SerializeField]
     private GameObject bossRoot;
@@ -97,6 +100,7 @@ public class HUDPanel : UIBase
     private Health playerHealth;
     private PlayerExperience playerExperience;
 
+    private WaveManager waveManager;
     private Health bossHealth;
 
     private readonly Dictionary<string, UIBuffItem> buffItems =
@@ -114,22 +118,91 @@ public class HUDPanel : UIBase
         SetCooldown(HUDSkillSlot.E, 0f);
 
         SetWave(0, 0);
+        SetEnemyCount(0);
     }
 
     protected override void OnOpen(object args)
     {
         BindFromArgs(args);
+        BindWave();
     }
 
     protected override void OnRefresh(object args)
     {
         BindFromArgs(args);
+        BindWave();
     }
 
     protected override void OnClose()
     {
         UnbindPlayer();
         UnbindBoss();
+        UnbindWave();
+    }
+
+    private void BindWave()
+    {
+        // 防止重复绑定。
+        UnbindWave();
+
+        waveManager = GameEntry.Wave;
+
+        if (waveManager == null)
+        {
+            SetWave(0, 0);
+            SetEnemyCount(0);
+            return;
+        }
+
+        // 监听“新波次开始”。
+        waveManager.WaveStarted +=
+            HandleWaveStarted;
+
+        // 监听“当前存活敌人数变化”。
+        waveManager.AliveEnemyCountChanged +=
+            HandleAliveEnemyCountChanged;
+
+        // HUD刚打开时立即同步一次当前状态。
+        SetWave(
+            waveManager.CurrentWaveNumber,
+            waveManager.TotalWaveCount
+        );
+
+        SetEnemyCount(
+            waveManager.AliveEnemyCount
+        );
+    }
+
+    private void UnbindWave()
+    {
+        if (waveManager == null)
+        {
+            return;
+        }
+
+        waveManager.WaveStarted -=
+            HandleWaveStarted;
+
+        waveManager.AliveEnemyCountChanged -=
+            HandleAliveEnemyCountChanged;
+
+        waveManager = null;
+    }
+
+    private void HandleWaveStarted(
+        int currentWave,
+        int totalWave)
+    {
+        SetWave(
+            currentWave,
+            totalWave
+        );
+    }
+
+    private void HandleAliveEnemyCountChanged(
+        int aliveCount)
+    {
+        SetEnemyCount(aliveCount);
     }
 
     private void BindFromArgs(object args)
@@ -347,6 +420,18 @@ public class HUDPanel : UIBase
         }
     }
 
+    private void SetEnemyCount(
+        int aliveCount)
+    {
+        if (enemyCountText == null)
+        {
+            return;
+        }
+
+        enemyCountText.text =
+            $"存活敌人：{Mathf.Max(0, aliveCount)}";
+    }
+
     public void SetWave(
         int currentWave,
         int totalWave)
@@ -358,19 +443,19 @@ public class HUDPanel : UIBase
 
         if (currentWave <= 0)
         {
-            waveText.text = "Wave --";
+            waveText.text = "波次 --";
             return;
         }
 
         if (totalWave > 0)
         {
             waveText.text =
-                $"Wave {currentWave} / {totalWave}";
+                $"第 {currentWave} / {totalWave} 波";
         }
         else
         {
             waveText.text =
-                $"Wave {currentWave}";
+                $"第 {currentWave} 波";
         }
     }
 

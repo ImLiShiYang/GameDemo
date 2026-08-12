@@ -52,7 +52,9 @@ public class ResultPanel : UIBase
         previousTimeScale =
             Time.timeScale;
 
-        // Keep gameplay time running while the result screen is open.
+        // 结算页面打开后冻结战斗，玩家、敌人和弹道都停止更新。
+
+        Time.timeScale = 0f;
 
         Cursor.lockState =
             CursorLockMode.None;
@@ -65,6 +67,7 @@ public class ResultPanel : UIBase
     protected override void OnRefresh(
         object args)
     {
+        Time.timeScale = 0f;
         RefreshContent(args);
     }
 

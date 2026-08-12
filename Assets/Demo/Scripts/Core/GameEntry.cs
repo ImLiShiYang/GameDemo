@@ -21,6 +21,39 @@ public class GameEntry : MonoBehaviour
 
     [SerializeField]
     private UIManager uiManager;
+    
+    [SerializeField]
+    private WaveManager waveManager;
+    
+    /// <summary>
+    /// 全局波次管理器入口。
+    /// </summary>
+    public static WaveManager Wave
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError(
+                    "场景中没有 GameEntry。"
+                );
+
+                return null;
+            }
+
+            if (Instance.waveManager == null)
+            {
+                Debug.LogError(
+                    "GameEntry 没有找到 WaveManager。",
+                    Instance
+                );
+
+                return null;
+            }
+
+            return Instance.waveManager;
+        }
+    }
 
     /// <summary>
     /// 全局对象池入口。
@@ -115,6 +148,15 @@ public class GameEntry : MonoBehaviour
                     true
                 );
         }
+        
+        // 自动寻找 WaveManager。
+        if (waveManager == null)
+        {
+            waveManager =
+                GetComponentInChildren<WaveManager>(
+                    true
+                );
+        }
 
         if (poolManager == null)
         {
@@ -128,6 +170,14 @@ public class GameEntry : MonoBehaviour
         {
             Debug.LogError(
                 "GameEntry 下没有找到 UIManager。",
+                this
+            );
+        }
+        
+        if (waveManager == null)
+        {
+            Debug.LogError(
+                "GameEntry 下没有找到 WaveManager。",
                 this
             );
         }

@@ -1,14 +1,22 @@
+using System;
 using UnityEngine;
 
 public class GameResultController : MonoBehaviour
 {
+    public static event Action GameEnded;
+
+    public static bool HasGameEnded { get; private set; }
+
     [SerializeField]
     private Health playerHealth;
 
     private bool gameEnded;
+    private WaveManager waveManager;
 
     private void Awake()
     {
+        HasGameEnded = false;
+
         if (playerHealth == null)
         {
             GrayboxPlayerController player =
@@ -21,6 +29,16 @@ public class GameResultController : MonoBehaviour
                 playerHealth =
                     player.GetComponent<Health>();
             }
+        }
+    }
+
+    private void Start()
+    {
+        waveManager = GameEntry.Wave;
+
+        if (waveManager != null)
+        {
+            waveManager.Victory +=HandleVictory;
         }
     }
 
@@ -37,14 +55,23 @@ public class GameResultController : MonoBehaviour
     {
         if (playerHealth != null)
         {
-            playerHealth.Died -=
-                HandlePlayerDied;
+            playerHealth.Died -=HandlePlayerDied;
+        }
+
+        if (waveManager != null)
+        {
+            waveManager.Victory -=HandleVictory;
         }
     }
 
     private void HandlePlayerDied()
     {
         ShowDefeat();
+    }
+
+    private void HandleVictory()
+    {
+        ShowVictory();
     }
 
     public void ShowDefeat()
@@ -55,6 +82,8 @@ public class GameResultController : MonoBehaviour
         }
 
         gameEnded = true;
+        HasGameEnded = true;
+        GameEnded?.Invoke();
 
         ShowResult(
             false,
@@ -71,6 +100,8 @@ public class GameResultController : MonoBehaviour
         }
 
         gameEnded = true;
+        HasGameEnded = true;
+        GameEnded?.Invoke();
 
         ShowResult(
             true,
@@ -79,10 +110,7 @@ public class GameResultController : MonoBehaviour
         );
     }
 
-    private void ShowResult(
-        bool victory,
-        string title,
-        string detail)
+    private void ShowResult(bool victory,string title,string detail)
     {
         UIManager uiManager =
             GameEntry.UI;

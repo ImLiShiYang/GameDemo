@@ -1,169 +1,136 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
 public class EnemySpawner : MonoBehaviour
 {
-    [Header("Enemy Prefabs")]
-    [SerializeField] private GameObject[] enemyPrefabs;
-    [SerializeField] private Transform player;
+    [Header("Spawn Points")]
+    [SerializeField]
+    private Transform[] spawnPoints;
 
-    [Header("Spawn Schedule")]
-    [SerializeField] private bool spawnOnStart = true;
-    [SerializeField, Min(0)] private int initialSpawnCount = 6;
-    [SerializeField, Min(1)] private int spawnCountPerBatch = 2;
-    [SerializeField, Min(1)] private int maxAliveEnemies = 12;
-    [SerializeField, Min(0f)] private float initialDelay = 1f;
-    [SerializeField, Min(0.1f)] private float spawnInterval = 4f;
+    [Header("References")]
+    [SerializeField]
+    private Transform player;
 
-    [Header("Spawn Area")]
-    [SerializeField, Min(0.1f)] private float spawnRadius = 25f;
-    [SerializeField, Min(0.1f)] private float navMeshSampleDistance = 4f;
-    [SerializeField, Min(0f)] private float minDistanceFromPlayer = 8f;
-    [SerializeField, Min(0f)] private float minEnemySpacing = 2f;
-    [SerializeField, Min(1)] private int sampleAttemptsPerEnemy = 30;
+    [Header("Spawn Check")]
+    [SerializeField, Min(0.1f)]
+    private float navMeshSampleDistance = 2f;
+
+    [SerializeField, Min(0f)]
+    private float minDistanceFromPlayer = 8f;
+
+    [SerializeField, Min(0f)]
+    private float minEnemySpacing = 1.5f;
 
     private readonly List<GameObject> spawnedEnemies = new();
-    private PoolManager poolManager;
-    private Coroutine spawnRoutine;
 
-#if UNITY_EDITOR
-    private void Reset()
-    {
-        enemyPrefabs = new[]
-        {
-            UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(
-                "Assets/Prefabs/Enemy_Range.prefab"),
-            UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(
-                "Assets/Prefabs/Enemy_Melee.prefab")
-        };
-    }
-#endif
+    private PoolManager poolManager;
 
     private void Start()
     {
-        poolManager = GameEntry.Pool;
-
-        if (player == null)
-        {
-            GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
-            player = playerObject != null ? playerObject.transform : null;
-        }
-
-        if (!ValidatePrefabs() || poolManager == null)
-        {
-            enabled = false;
-            return;
-        }
-
-        foreach (GameObject enemyPrefab in enemyPrefabs)
-        {
-            if (enemyPrefab != null)
-            {
-                poolManager.WarmEnemyPool(enemyPrefab);
-            }
-        }
-
-        if (spawnOnStart)
-        {
-            spawnRoutine = StartCoroutine(SpawnLoop());
-        }
+        ResolveReferences();
     }
 
-    private void OnDisable()
+    /// <summary>
+    /// WaveManager 调用这个函数：
+    /// 指定一个敌人 Prefab，让 EnemySpawner 找位置并生成。
+    /// </summary>
+    public GameObject Spawn(GameObject enemyPrefab)
     {
-        if (spawnRoutine != null)
+        if (enemyPrefab == null)
         {
-            StopCoroutine(spawnRoutine);
-            spawnRoutine = null;
-        }
-    }
+            Debug.LogError(
+                "EnemySpawner 收到了空的 Enemy Prefab。",
+                this
+            );
 
-    private IEnumerator SpawnLoop()
-    {
-        if (initialDelay > 0f)
-        {
-            yield return new WaitForSeconds(initialDelay);
+            return null;
         }
 
-        SpawnEnemies(initialSpawnCount);
-        WaitForSeconds interval = new WaitForSeconds(spawnInterval);
-
-        while (true)
-        {
-            yield return interval;
-            SpawnEnemies(spawnCountPerBatch);
-        }
-    }
-
-    [ContextMenu("Spawn Batch Now")]
-    public void SpawnBatchNow()
-    {
-        if (!Application.isPlaying)
-        {
-            return;
-        }
+        ResolveReferences();
+        CleanupEnemies();
 
         if (poolManager == null)
         {
-            poolManager = GameEntry.Pool;
+            Debug.LogError(
+                "EnemySpawner 没有找到 PoolManager。",
+                this
+            );
+
+            return null;
         }
 
-        SpawnEnemies(spawnCountPerBatch);
-    }
-
-    private void SpawnEnemies(int requestedCount)
-    {
-        CleanupInactiveEnemies();
-
-        int availableSlots = Mathf.Max(0, maxAliveEnemies - spawnedEnemies.Count);
-        int countToSpawn = Mathf.Min(Mathf.Max(0, requestedCount), availableSlots);
-
-        for (int i = 0; i < countToSpawn; i++)
+        if (!TryGetSpawnPoint(
+                out Vector3 spawnPosition,
+                out Quaternion spawnRotation))
         {
-            if (!TryFindSpawnPoint(out Vector3 spawnPosition))
-            {
-                Debug.LogWarning(
-                    $"{name} could not find a valid NavMesh spawn point.",
-                    this);
-                break;
-            }
+            Debug.LogWarning(
+                "EnemySpawner 没有找到合适的出生点。",
+                this
+            );
 
-            GameObject prefab = GetRandomPrefab();
-
-            if (prefab == null)
-            {
-                break;
-            }
-
-            Quaternion rotation = Quaternion.Euler(
-                0f,
-                Random.Range(0f, 360f),
-                0f);
-
-            GameObject enemy = poolManager.GetEnemy(
-                prefab,
-                spawnPosition,
-                rotation);
-
-            if (enemy != null)
-            {
-                spawnedEnemies.Add(enemy);
-            }
+            return null;
         }
+
+        GameObject enemy = poolManager.GetEnemy(
+            enemyPrefab,
+            spawnPosition,
+            spawnRotation
+        );
+
+        if (enemy != null)
+        {
+            spawnedEnemies.Add(enemy);
+        }
+
+        return enemy;
     }
 
-    private bool TryFindSpawnPoint(out Vector3 spawnPosition)
+    /// <summary>
+    /// 从所有 SpawnPoint 中随机挑一个合法出生点。
+    /// </summary>
+    private bool TryGetSpawnPoint(
+        out Vector3 spawnPosition,
+        out Quaternion spawnRotation)
     {
-        for (int attempt = 0; attempt < sampleAttemptsPerEnemy; attempt++)
-        {
-            Vector2 randomOffset = Random.insideUnitCircle * spawnRadius;
-            Vector3 candidate = transform.position +
-                                new Vector3(randomOffset.x, 0f, randomOffset.y);
+        spawnPosition = default;
+        spawnRotation = Quaternion.identity;
 
+        if (spawnPoints == null ||
+            spawnPoints.Length == 0)
+        {
+            Debug.LogError(
+                "EnemySpawner 没有配置 SpawnPoints。",
+                this
+            );
+
+            return false;
+        }
+
+        // 不总是从 SpawnPoint[0] 开始，
+        // 而是随机一个起点。
+        int startIndex =
+            Random.Range(0, spawnPoints.Length);
+
+        for (int offset = 0;
+             offset < spawnPoints.Length;
+             offset++)
+        {
+            int index =
+                (startIndex + offset) %
+                spawnPoints.Length;
+
+            Transform spawnPoint =
+                spawnPoints[index];
+
+            if (spawnPoint == null)
+            {
+                continue;
+            }
+
+            // SpawnPoint 附近必须存在 NavMesh。
             if (!NavMesh.SamplePosition(
-                    candidate,
+                    spawnPoint.position,
                     out NavMeshHit hit,
                     navMeshSampleDistance,
                     NavMesh.AllAreas))
@@ -171,53 +138,121 @@ public class EnemySpawner : MonoBehaviour
                 continue;
             }
 
-            if (!IsFarEnoughFromPlayer(hit.position) ||
-                !IsFarEnoughFromEnemies(hit.position))
+            if (!IsFarEnoughFromPlayer(
+                    hit.position))
+            {
+                continue;
+            }
+
+            if (!IsFarEnoughFromEnemies(
+                    hit.position))
             {
                 continue;
             }
 
             spawnPosition = hit.position;
+
+            // 默认让小怪生成时朝向玩家。
+            spawnRotation =
+                GetSpawnRotation(
+                    spawnPoint,
+                    spawnPosition
+                );
+
             return true;
         }
 
-        spawnPosition = default;
         return false;
     }
 
-    private bool IsFarEnoughFromPlayer(Vector3 position)
+    private Quaternion GetSpawnRotation(
+        Transform spawnPoint,
+        Vector3 spawnPosition)
     {
-        if (player == null || minDistanceFromPlayer <= 0f)
+        if (player == null)
+        {
+            return spawnPoint.rotation;
+        }
+
+        Vector3 direction =
+            player.position -
+            spawnPosition;
+
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude < 0.001f)
+        {
+            return spawnPoint.rotation;
+        }
+
+        return Quaternion.LookRotation(
+            direction.normalized,
+            Vector3.up
+        );
+    }
+
+    private bool IsFarEnoughFromPlayer(
+        Vector3 position)
+    {
+        if (player == null ||
+            minDistanceFromPlayer <= 0f)
         {
             return true;
         }
 
-        Vector3 difference = position - player.position;
+        Vector3 difference =
+            position - player.position;
+
         difference.y = 0f;
+
+        float minSqrDistance =
+            minDistanceFromPlayer *
+            minDistanceFromPlayer;
+
         return difference.sqrMagnitude >=
-               minDistanceFromPlayer * minDistanceFromPlayer;
+               minSqrDistance;
     }
 
-    private bool IsFarEnoughFromEnemies(Vector3 position)
+    private bool IsFarEnoughFromEnemies(
+        Vector3 position)
     {
         if (minEnemySpacing <= 0f)
         {
             return true;
         }
 
-        float minimumSqrDistance = minEnemySpacing * minEnemySpacing;
+        float minSqrDistance =
+            minEnemySpacing *
+            minEnemySpacing;
 
-        foreach (GameObject enemy in spawnedEnemies)
+        foreach (GameObject enemy
+                 in spawnedEnemies)
         {
-            if (enemy == null || !enemy.activeInHierarchy)
+            if (enemy == null ||
+                !enemy.activeInHierarchy)
             {
                 continue;
             }
 
-            Vector3 difference = position - enemy.transform.position;
+            Health health =
+                enemy.GetComponent<Health>();
+
+            // 已经死亡、等待回对象池的尸体
+            // 不参与出生点间距判断。
+            if (health != null &&
+                health.IsDead)
+            {
+                continue;
+            }
+
+            Vector3 difference =
+                position -
+                enemy.transform.position;
+
             difference.y = 0f;
 
-            if (difference.sqrMagnitude < minimumSqrDistance)
+            if (difference.sqrMagnitude <
+                minSqrDistance)
             {
                 return false;
             }
@@ -226,60 +261,78 @@ public class EnemySpawner : MonoBehaviour
         return true;
     }
 
-    private GameObject GetRandomPrefab()
+    private void CleanupEnemies()
     {
-        int startIndex = Random.Range(0, enemyPrefabs.Length);
-
-        for (int offset = 0; offset < enemyPrefabs.Length; offset++)
+        for (int i =
+                 spawnedEnemies.Count - 1;
+             i >= 0;
+             i--)
         {
-            int index = (startIndex + offset) % enemyPrefabs.Length;
-            GameObject prefab = enemyPrefabs[index];
+            GameObject enemy =
+                spawnedEnemies[i];
 
-            if (prefab != null)
+            if (enemy == null ||
+                !enemy.activeInHierarchy)
             {
-                return prefab;
+                spawnedEnemies.RemoveAt(i);
+                continue;
             }
-        }
 
-        return null;
-    }
+            Health health =
+                enemy.GetComponent<Health>();
 
-    private void CleanupInactiveEnemies()
-    {
-        for (int i = spawnedEnemies.Count - 1; i >= 0; i--)
-        {
-            GameObject enemy = spawnedEnemies[i];
-
-            if (enemy == null || !enemy.activeInHierarchy)
+            if (health != null &&
+                health.IsDead)
             {
                 spawnedEnemies.RemoveAt(i);
             }
         }
     }
 
-    private bool ValidatePrefabs()
+    private void ResolveReferences()
     {
-        if (enemyPrefabs == null || enemyPrefabs.Length == 0)
+        if (poolManager == null)
         {
-            Debug.LogError("EnemySpawner has no enemy prefabs assigned.", this);
-            return false;
+            poolManager =
+                GameEntry.Pool;
         }
 
-        foreach (GameObject enemyPrefab in enemyPrefabs)
+        if (player == null)
         {
-            if (enemyPrefab != null)
+            GameObject playerObject =
+                GameObject.FindGameObjectWithTag(
+                    "Player"
+                );
+
+            if (playerObject != null)
             {
-                return true;
+                player =
+                    playerObject.transform;
             }
         }
-
-        Debug.LogError("EnemySpawner enemy prefab list only contains null entries.", this);
-        return false;
     }
 
+#if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
-        Gizmos.color = new Color(1f, 0.55f, 0f, 0.8f);
-        Gizmos.DrawWireSphere(transform.position, spawnRadius);
+        if (spawnPoints == null)
+        {
+            return;
+        }
+
+        foreach (Transform spawnPoint
+                 in spawnPoints)
+        {
+            if (spawnPoint == null)
+            {
+                continue;
+            }
+
+            Gizmos.DrawWireSphere(
+                spawnPoint.position,
+                0.75f
+            );
+        }
     }
+#endif
 }

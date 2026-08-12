@@ -71,9 +71,9 @@ public class GameUIBootstrap : MonoBehaviour
         {
             startGameDirectlyOnNextLoad = false;
 
-            OpenHUD(uiManager);
-
             Time.timeScale = 1f;
+
+            StartGameplay();
         }
         else if (openMainMenuOnStart && uiManager.HasConfig(UIType.MainMenu))
         {
@@ -81,7 +81,7 @@ public class GameUIBootstrap : MonoBehaviour
         }
         else if (openHudOnStart && uiManager.HasConfig(UIType.HUD))
         {
-            OpenHUD(uiManager);
+            StartGameplay();
         }
 
         if (openTutorialOnStart && !TutorialPanel.HasBeenShown && uiManager.HasConfig(UIType.Tutorial))
@@ -92,14 +92,28 @@ public class GameUIBootstrap : MonoBehaviour
 
     private void HandleGameStarted()
     {
-        UIManager uiManager =GameEntry.UI;
+        StartGameplay();
+    }
+    
+    private void StartGameplay()
+    {
+        UIManager uiManager = GameEntry.UI;
 
         if (uiManager == null)
         {
             return;
         }
 
+        // 1. 打开游戏 HUD
         OpenHUD(uiManager);
+
+        // 2. 正式开始波次
+        WaveManager waveManager = GameEntry.Wave;
+
+        if (waveManager != null)
+        {
+            waveManager.StartWaves();
+        }
     }
     
     private void OpenHUD(UIManager uiManager)

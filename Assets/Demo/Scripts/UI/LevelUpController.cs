@@ -49,6 +49,9 @@ public class LevelUpController : MonoBehaviour
 
     private void OnEnable()
     {
+        GameResultController.GameEnded +=
+            HandleGameEnded;
+
         if (playerExperience != null)
         {
             playerExperience.LeveledUp +=
@@ -58,6 +61,9 @@ public class LevelUpController : MonoBehaviour
 
     private void OnDisable()
     {
+        GameResultController.GameEnded -=
+            HandleGameEnded;
+
         if (playerExperience != null)
         {
             playerExperience.LeveledUp -=
@@ -73,6 +79,11 @@ public class LevelUpController : MonoBehaviour
 
     private void HandleLevelUp(int newLevel)
     {
+        if (GameResultController.HasGameEnded)
+        {
+            return;
+        }
+
         pendingLevelUps++;
 
         if (!isChoosing)
@@ -83,6 +94,12 @@ public class LevelUpController : MonoBehaviour
 
     private void OpenNextSelection()
     {
+        if (GameResultController.HasGameEnded)
+        {
+            CancelAllSelections();
+            return;
+        }
+
         if (upgradeSystem == null)
         {
             return;
@@ -167,6 +184,18 @@ public class LevelUpController : MonoBehaviour
             return;
         }
 
+        CloseUpgradePanel();
+        ResumeGame();
+    }
+
+    private void HandleGameEnded()
+    {
+        CancelAllSelections();
+    }
+
+    private void CancelAllSelections()
+    {
+        pendingLevelUps = 0;
         CloseUpgradePanel();
         ResumeGame();
     }
