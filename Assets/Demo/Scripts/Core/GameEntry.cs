@@ -27,6 +27,36 @@ public class GameEntry : MonoBehaviour
 
     [SerializeField]
     private LuaManager luaManager;
+
+    [SerializeField]
+    private SkillManager skillManager;
+    
+    public static SkillManager Skill
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError(
+                    "场景中没有 GameEntry。"
+                );
+
+                return null;
+            }
+
+            if (Instance.skillManager == null)
+            {
+                Debug.LogError(
+                    "GameEntry 没有找到 SkillManager。",
+                    Instance
+                );
+
+                return null;
+            }
+
+            return Instance.skillManager;
+        }
+    }
     
     /// <summary>
     /// 全局 Lua 管理器入口。
@@ -207,6 +237,18 @@ public class GameEntry : MonoBehaviour
                 gameObject.AddComponent<LuaManager>();
         }
 
+        if (skillManager == null)
+        {
+            skillManager =GetComponentInChildren<SkillManager>(true);
+        }
+
+        if (skillManager == null)
+        {
+            skillManager =
+                gameObject.AddComponent<SkillManager>();
+        }
+        
+        
         if (poolManager == null)
         {
             Debug.LogError(
@@ -235,6 +277,14 @@ public class GameEntry : MonoBehaviour
         {
             Debug.LogError(
                 "GameEntry 没有成功创建 LuaManager。",
+                this
+            );
+        }
+        
+        if (skillManager == null)
+        {
+            Debug.LogError(
+                "GameEntry 没有成功创建 skillManager。",
                 this
             );
         }

@@ -187,6 +187,60 @@ public sealed class LuaManager : MonoBehaviour
             return false;
         }
     }
+    
+    /// <summary>
+    /// 调用 Lua 业务模块中的指定函数，并获取返回值。
+    /// </summary>
+    public object[] CallWithResults(string moduleName,string functionName,params object[] args)
+    {
+        if (string.IsNullOrWhiteSpace(functionName))
+        {
+            Debug.LogError(
+                "Lua 函数名不能为空。",
+                this
+            );
+
+            return null;
+        }
+
+        if (!LoadModule(moduleName))
+        {
+            return null;
+        }
+
+        LuaModule module = modules[moduleName];
+        LuaFunction function = null;
+
+        try
+        {
+            function =module.Table.Get<string, LuaFunction>(functionName);
+
+            if (function == null)
+            {
+                Debug.LogError(
+                    $"Lua 模块 {moduleName} 中没有函数 {functionName}。",
+                    this
+                );
+
+                return null;
+            }
+
+            return function.Call(args);
+        }
+        catch (Exception exception)
+        {
+            LogLuaException(
+                $"调用 Lua 函数失败：{moduleName}.{functionName}",
+                exception
+            );
+
+            return null;
+        }
+        finally
+        {
+            function?.Dispose();
+        }
+    }
 
     /// <summary>
     /// 调用业务模块中的指定函数。

@@ -142,6 +142,15 @@ public class GrayboxPlayerController : MonoBehaviour
     /// 当前是否拥有有效瞄准点。
     /// </summary>
     public bool HasAimPoint { get; private set; }
+    
+    public Vector3 AimOriginPosition
+    {
+        get
+        {
+            Transform aimOrigin = GetAimOriginTransform();
+            return aimOrigin != null ? aimOrigin.position : transform.position;
+        }
+    }
 
     // Animator 中必须创建两个 Float 参数：MoveX 和 MoveY。
     private static readonly int MoveXHash = Animator.StringToHash("MoveX");
