@@ -138,7 +138,7 @@ public class SkillManager : MonoBehaviour
         // 1. 从 Lua 获取技能配置
         object[] results =luaManager.CallWithResults(SkillConfigModule,"GetSkillValues",skillId);
 
-        if (results == null || results.Length < 4)
+        if (results == null || results.Length < 5)
         {
             Debug.LogError(
                 $"读取技能配置失败：{skillId}",
@@ -160,6 +160,9 @@ public class SkillManager : MonoBehaviour
         float warningTime =
             Convert.ToSingle(results[3]);
 
+        int interruptPower =
+            Mathf.Max(0, Convert.ToInt32(results[4]));
+
         // 2. 判断技能是否还在冷却
         if (!CanCast(skillId, out float remainingCooldown))
         {
@@ -177,7 +180,7 @@ public class SkillManager : MonoBehaviour
         
         // DetectEnemiesInRange(skillId,range);
         
-        ExecuteSkill(skillId,damage,range,warningTime);
+        ExecuteSkill(skillId,damage,range,warningTime,interruptPower);
         
 
         // 4. 目前先只打印，下一步再真正执行技能
@@ -186,21 +189,31 @@ public class SkillManager : MonoBehaviour
             $"伤害：{damage} | " +
             $"范围：{range} | " +
             $"冷却：{cooldown} | " +
-            $"预警：{warningTime}",
+            $"预警：{warningTime} | " +
+            $"打断力：{interruptPower}",
             this
         );
     }
     
-    private void ExecuteSkill(string skillId, float damage, float range, float warningTime)
+    private void ExecuteSkill(
+        string skillId,
+        float damage,
+        float range,
+        float warningTime,
+        int interruptPower)
     {
         switch (skillId)
         {
             case "ShockWave":
-                StartCoroutine(ExecuteShockWaveRoutine(damage, range, warningTime));
+                StartCoroutine(ExecuteShockWaveRoutine(
+                    damage,
+                    range,
+                    warningTime,
+                    interruptPower));
                 break;
 
             case "PiercingBeam":
-                ExecutePiercingBeam(damage, range);
+                ExecutePiercingBeam(damage, range, interruptPower);
                 break;
 
             default:
@@ -209,7 +222,10 @@ public class SkillManager : MonoBehaviour
         }
     }
     
-    private void ExecutePiercingBeam(float damage, float range)
+    private void ExecutePiercingBeam(
+        float damage,
+        float range,
+        int interruptPower)
     {
         if (player == null || playerController == null)
         {
@@ -264,7 +280,9 @@ public class SkillManager : MonoBehaviour
                 player.gameObject,
                 hit.point,
                 direction,
-                hit.normal
+                hit.normal,
+                DamageKind.Skill,
+                interruptPower
             );
 
             damageable.TakeDamage(damageInfo);
@@ -298,7 +316,11 @@ public class SkillManager : MonoBehaviour
         Destroy(effect, piercingBeamEffectLifeTime);
     }
     
-    private IEnumerator ExecuteShockWaveRoutine(float damage, float range, float warningTime)
+    private IEnumerator ExecuteShockWaveRoutine(
+        float damage,
+        float range,
+        float warningTime,
+        int interruptPower)
     {
         if (player == null)
         {
@@ -318,7 +340,7 @@ public class SkillManager : MonoBehaviour
             Destroy(warningObject);
         }
 
-        ExecuteShockWave(damage, range);
+        ExecuteShockWave(damage, range, interruptPower);
     }
     
     private GameObject CreateShockWaveWarning(float range)
@@ -348,7 +370,10 @@ public class SkillManager : MonoBehaviour
         return warningObject;
     }
     
-    private void ExecuteShockWave(float damage,float range)
+    private void ExecuteShockWave(
+        float damage,
+        float range,
+        int interruptPower)
     {
         if (player == null)
         {
@@ -421,7 +446,9 @@ public class SkillManager : MonoBehaviour
                     player.gameObject,
                     hitPoint,
                     direction,
-                    hitNormal
+                    hitNormal,
+                    DamageKind.Skill,
+                    interruptPower
                 );
 
             damageable.TakeDamage(

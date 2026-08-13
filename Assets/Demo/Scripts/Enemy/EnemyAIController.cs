@@ -9,7 +9,8 @@ public class EnemyAIController : MonoBehaviour
     {
         Patrol,
         Chase,
-        Attack
+        Attack,
+        Stunned
     }
 
     [Header("目标")]
@@ -100,6 +101,23 @@ public class EnemyAIController : MonoBehaviour
     [SerializeField]
     private string attackStateName = "Mutant Swiping";
 
+    [Header("打断与硬直")]
+    [Tooltip("伤害的打断力达到该值时，才可能打断攻击前摇。")]
+    [SerializeField, Min(0)]
+    private int interruptResistance = 1;
+
+    [Tooltip("成功打断攻击后的硬直时间。")]
+    [SerializeField, Min(0f)]
+    private float stunDuration = 0.6f;
+
+    [Tooltip("硬直结束后暂时免疫再次打断，防止连续控制。")]
+    [SerializeField, Min(0f)]
+    private float interruptImmunityDuration = 0.8f;
+
+    [Tooltip("可选。Animator 中用于播放受击硬直动画的 Trigger。")]
+    [SerializeField]
+    private string hitTriggerParameter = "Hit";
+
     private NavMeshAgent agent;
     private Animator animator;
     private Health health;
@@ -111,10 +129,20 @@ public class EnemyAIController : MonoBehaviour
     private float nextAttackTime;
     private bool isWaiting;
     private float hitSlowEndTime;
+    private float stunEndTime;
+    private float interruptImmunityEndTime;
+    // 表示当前是否存在一轮有效攻击。
+    private bool attackActive;
+    // 表示攻击是否已经到达伤害生效帧。
+    private bool attackCommitted;
+    // 用于确认 Animator 是否真正进入过攻击状态。
+    private bool attackAnimationEntered;
+    private bool hasHitTrigger;
 
     private int speedHash;
     private int attackHash;
     private int attackStateHash;
+    private int hitTriggerHash;
 
     private void Awake()
     {
@@ -125,6 +153,8 @@ public class EnemyAIController : MonoBehaviour
         speedHash = Animator.StringToHash(speedParameter);
         attackHash = Animator.StringToHash(attackParameter);
         attackStateHash = Animator.StringToHash(attackStateName);
+        hitTriggerHash = Animator.StringToHash(hitTriggerParameter);
+        hasHitTrigger = HasAnimatorTrigger(hitTriggerParameter);
     }
     
     public void ResetForReuse()
@@ -135,6 +165,16 @@ public class EnemyAIController : MonoBehaviour
         waitEndTime = 0f;
         nextAttackTime = Time.time;
         hitSlowEndTime = 0f;
+        stunEndTime = 0f;
+        interruptImmunityEndTime = 0f;
+        ResetAttackRuntime();
+
+        animator.ResetTrigger(attackHash);
+
+        if (hasHitTrigger)
+        {
+            animator.ResetTrigger(hitTriggerHash);
+        }
 
         if (player == null)
         {
@@ -227,6 +267,10 @@ public class EnemyAIController : MonoBehaviour
             case EnemyState.Attack:
                 UpdateAttack(distanceToPlayer);
                 break;
+
+            case EnemyState.Stunned:
+                UpdateStunned();
+                break;
         }
 
         // 根据受击状态更新真正移动速度
@@ -237,6 +281,7 @@ public class EnemyAIController : MonoBehaviour
 
     private void StopAfterDeath()
     {
+        ResetAttackRuntime();
         animator.ResetTrigger(attackHash);
         animator.SetFloat(speedHash, 0f);
 
@@ -317,6 +362,9 @@ public class EnemyAIController : MonoBehaviour
 
         // 每次受击都会重新刷新减速时间
         hitSlowEndTime = Time.time + hitSlowDuration;
+
+        // 检查这次伤害能否打断当前攻击
+        TryInterruptAttack(damageInfo);
     }
     
     private void UpdateMoveSpeed()
@@ -372,7 +420,14 @@ public class EnemyAIController : MonoBehaviour
          */
         if (IsAttackAnimationPlaying())
         {
+            attackAnimationEntered = true;
             return;
+        }
+
+        // 动画已经进入过攻击状态，之后又离开，说明本轮攻击自然结束。
+        if (attackActive && attackAnimationEntered)
+        {
+            ResetAttackRuntime();
         }
 
         /*
@@ -402,9 +457,134 @@ public class EnemyAIController : MonoBehaviour
          */
         if (Time.time >= nextAttackTime)
         {
+            // 创建一轮新的有效攻击。
+            // 当前还没有到达生效帧。
+            // Animator 还没有确认进入攻击状态。
+            attackActive = true;
+            attackCommitted = false;
+            attackAnimationEntered = false;
             nextAttackTime = Time.time + attackCooldown;
             animator.SetTrigger(attackHash);
         }
+    }
+
+    private void UpdateStunned()
+    {
+        agent.isStopped = true;
+        animator.SetFloat(speedHash, 0f);
+
+        if (Time.time < stunEndTime)
+        {
+            return;
+        }
+
+        if (player == null)
+        {
+            EnterPatrolState();
+            return;
+        }
+
+        EnterChaseState();
+    }
+
+    private bool TryInterruptAttack(DamageInfo damageInfo)
+    {
+        // 有打断力
+        // + 打断力达到抗性
+        // + 小怪正在攻击
+        // + 攻击仍有效
+        // + 还处于前摇
+        // + 不在保护期
+        // = 成功打断
+        if (damageInfo.InterruptPower <= 0 ||
+            damageInfo.InterruptPower < interruptResistance ||
+            currentState != EnemyState.Attack ||
+            !attackActive ||
+            attackCommitted ||
+            Time.time < interruptImmunityEndTime)
+        {
+            return false;
+        }
+
+        InterruptCurrentAttack(damageInfo);
+        return true;
+    }
+
+    private void InterruptCurrentAttack(DamageInfo damageInfo)
+    {
+        ResetAttackRuntime();
+        animator.ResetTrigger(attackHash);
+
+        if (hasHitTrigger)
+        {
+            animator.SetTrigger(hitTriggerHash);
+        }
+
+        currentState = EnemyState.Stunned;
+        stunEndTime = Time.time + stunDuration;
+        interruptImmunityEndTime =stunEndTime + interruptImmunityDuration;
+            
+        nextAttackTime = Mathf.Max(nextAttackTime, stunEndTime);
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            agent.isStopped = true;
+            agent.ResetPath();
+        }
+
+        Debug.Log(
+            $"{name} 的攻击被打断：" +
+            $"打断力={damageInfo.InterruptPower}，" +
+            $"抗性={interruptResistance}，" +
+            $"硬直={stunDuration:F2} 秒。",
+            this
+        );
+    }
+
+    private void ResetAttackRuntime()
+    {
+        attackActive = false;
+        attackCommitted = false;
+        attackAnimationEntered = false;
+    }
+
+    private bool TryCommitAttack()
+    {
+        if (!attackActive ||
+            attackCommitted ||
+            currentState != EnemyState.Attack ||
+            health == null ||
+            health.IsDead)
+        {
+            return false;
+        }
+
+        attackCommitted = true;
+        return true;
+    }
+
+    private bool HasAnimatorTrigger(string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(parameterName))
+        {
+            return false;
+        }
+
+        foreach (AnimatorControllerParameter parameter in animator.parameters)
+        {
+            if (parameter.type == AnimatorControllerParameterType.Trigger &&
+                parameter.name == parameterName)
+            {
+                return true;
+            }
+        }
+
+        Debug.LogWarning(
+            $"{name} 的 Animator 没有 Trigger 参数 {parameterName}。" +
+            "打断逻辑仍会生效，但不会播放受击动画。",
+            this
+        );
+        return false;
     }
 
     private bool IsAttackAnimationPlaying()
@@ -566,6 +746,11 @@ public class EnemyAIController : MonoBehaviour
     /// </summary>
     public void AnimationEvent_AttackHit()
     {
+        if (!TryCommitAttack())
+        {
+            return;
+        }
+
         // 小怪已经死亡，或者玩家不存在，不处理伤害。
         if ((health != null && health.IsDead) || player == null)
         {
@@ -681,6 +866,11 @@ public class EnemyAIController : MonoBehaviour
     /// </summary>
     public void AnimationEvent_FireHomingProjectile()
     {
+        if (!TryCommitAttack())
+        {
+            return;
+        }
+
         // 小怪死亡或者玩家不存在，不生成魔法弹。
         if ((health != null && health.IsDead) || player == null)
         {
@@ -777,6 +967,14 @@ public class EnemyAIController : MonoBehaviour
             attackDamage,
             gameObject
         );
+    }
+
+    /// <summary>
+    /// 可选的攻击动画末帧事件。即使未配置，UpdateAttack 也会兜底结束攻击。
+    /// </summary>
+    public void AnimationEvent_AttackFinished()
+    {
+        ResetAttackRuntime();
     }
     
     private static float GetFlatDistance(Vector3 first, Vector3 second)

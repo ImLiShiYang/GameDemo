@@ -7,7 +7,8 @@ local skills =
         damage = 30,
         range = 2,
         cooldown = 0.1,
-        warningTime = 1
+        warningTime = 1,
+        interruptPower = 2
     },
 
     PiercingBeam =
@@ -15,7 +16,8 @@ local skills =
         damage = 60,
         range = 12,
         cooldown = 0.1,
-        warningTime = 0
+        warningTime = 0,
+        interruptPower = 1
     }
 }
 
@@ -35,7 +37,8 @@ function SkillConfig.GetSkillValues(skillId)
         config.damage,
         config.range,
         config.cooldown,
-        config.warningTime
+        config.warningTime,
+        config.interruptPower
 end
 
 return SkillConfig
