@@ -24,7 +24,40 @@ public class GameEntry : MonoBehaviour
     
     [SerializeField]
     private WaveManager waveManager;
+
+    [SerializeField]
+    private LuaManager luaManager;
     
+    /// <summary>
+    /// 全局 Lua 管理器入口。
+    /// </summary>
+    public static LuaManager Lua
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError(
+                    "场景中没有 GameEntry。"
+                );
+
+                return null;
+            }
+
+            if (Instance.luaManager == null)
+            {
+                Debug.LogError(
+                    "GameEntry 没有找到 LuaManager。",
+                    Instance
+                );
+
+                return null;
+            }
+
+            return Instance.luaManager;
+        }
+    }
+
     /// <summary>
     /// 全局波次管理器入口。
     /// </summary>
@@ -158,6 +191,22 @@ public class GameEntry : MonoBehaviour
                 );
         }
 
+        // LuaManager 统一由 GameEntry 持有。
+        // 场景中没有配置时，自动挂到 GameEntry 自身。
+        if (luaManager == null)
+        {
+            luaManager =
+                GetComponentInChildren<LuaManager>(
+                    true
+                );
+        }
+
+        if (luaManager == null)
+        {
+            luaManager =
+                gameObject.AddComponent<LuaManager>();
+        }
+
         if (poolManager == null)
         {
             Debug.LogError(
@@ -178,6 +227,14 @@ public class GameEntry : MonoBehaviour
         {
             Debug.LogError(
                 "GameEntry 下没有找到 WaveManager。",
+                this
+            );
+        }
+
+        if (luaManager == null)
+        {
+            Debug.LogError(
+                "GameEntry 没有成功创建 LuaManager。",
                 this
             );
         }
