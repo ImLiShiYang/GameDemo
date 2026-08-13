@@ -15,80 +15,132 @@ public class MainMenuPanel : UIBase
 
     public static event Action GameStarted;
 
+    private Action startButtonCallback;
+    private Action quitButtonCallback;
+
     protected override void OnInit()
     {
-        if (startButton != null)
-        {
-            startButton.onClick.AddListener(
-                HandleStartButtonClicked
-            );
-        }
-
-        if (quitButton != null)
-        {
-            quitButton.onClick.AddListener(
-                HandleQuitButtonClicked
-            );
-        }
+        CallLua("OnInit", this);
     }
 
     protected override void OnOpen(object args)
     {
-        // 主菜单出现时暂停游戏。
-        Time.timeScale = 0f;
-
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
+        CallLua("OnOpen", this, args);
     }
 
-    private void HandleStartButtonClicked()
+    protected override void OnRefresh(object args)
     {
-        if (TryCallLua("OnStartClicked"))
-        {
-            return;
-        }
-
-        StartGameFromLua();
+        CallLua("OnRefresh", this, args);
     }
 
-    private void HandleQuitButtonClicked()
+    protected override void OnClose()
     {
-        if (TryCallLua("OnQuitClicked"))
-        {
-            return;
-        }
-
-        QuitGameFromLua();
+        CallLua("OnClose", this);
     }
 
-    private bool TryCallLua(string functionName)
+    private bool CallLua(string functionName, params object[] args)
     {
         if (GameEntry.Instance == null)
         {
+            Debug.LogError(
+                $"主菜单无法调用 Lua：场景中没有 GameEntry。函数={functionName}",
+                this
+            );
             return false;
         }
 
         LuaManager luaManager = GameEntry.Lua;
 
-        return luaManager != null && luaManager.Call(LuaModuleName,functionName,this);
+        return luaManager != null && luaManager.Call(LuaModuleName, functionName, args);
     }
 
     /// <summary>
-    /// 提供给 Lua 调用的开始游戏入口。
+    /// Lua 在 OnInit 中通过此桥接绑定开始按钮。
     /// </summary>
-    public void StartGameFromLua()
+    public void BindStartButton(Action callback)
     {
-        Time.timeScale = 1f;
+        if (startButton != null)
+        {
+            startButton.onClick.RemoveListener(InvokeStartButtonCallback);
+        }
 
+        startButtonCallback = callback;
+
+        if (startButton != null && startButtonCallback != null)
+        {
+            startButton.onClick.AddListener(InvokeStartButtonCallback);
+        }
+    }
+
+    /// <summary>
+    /// Lua 在 OnInit 中通过此桥接绑定退出按钮。
+    /// </summary>
+    public void BindQuitButton(Action callback)
+    {
+        if (quitButton != null)
+        {
+            quitButton.onClick.RemoveListener(InvokeQuitButtonCallback);
+        }
+
+        quitButtonCallback = callback;
+
+        if (quitButton != null && quitButtonCallback != null)
+        {
+            quitButton.onClick.AddListener(InvokeQuitButtonCallback);
+        }
+    }
+
+    private void InvokeStartButtonCallback()
+    {
+        InvokeLuaButtonCallback(startButtonCallback, "OnStartClicked");
+    }
+
+    private void InvokeQuitButtonCallback()
+    {
+        InvokeLuaButtonCallback(quitButtonCallback, "OnQuitClicked");
+    }
+
+    private void InvokeLuaButtonCallback(Action callback, string functionName)
+    {
+        if (callback == null)
+        {
+            Debug.LogError($"主菜单 Lua 按钮未绑定：{functionName}", this);
+            return;
+        }
+
+        try
+        {
+            callback.Invoke();
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError(
+                $"调用主菜单 Lua 按钮失败：{LuaModuleName}.{functionName}\n{exception}",
+                this
+            );
+        }
+    }
+
+    /// <summary>
+    /// Lua 决定关闭主菜单时调用的最小 UI 桥接接口。
+    /// </summary>
+    public void CloseFromLua()
+    {
         CloseSelf();
+    }
 
+    /// <summary>
+    /// Lua 完成主菜单流程后通知 C# 游戏模块。
+    /// </summary>
+    public void NotifyGameStartedFromLua()
+    {
         GameStarted?.Invoke();
     }
 
     /// <summary>
-    /// 提供给 Lua 调用的退出游戏入口。
+    /// 平台相关的退出 API 保留为 Lua 可调用的原子桥接接口。
     /// </summary>
-    public void QuitGameFromLua()
+    public void QuitApplicationFromLua()
     {
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.isPlaying =
@@ -96,5 +148,23 @@ public class MainMenuPanel : UIBase
 #else
         Application.Quit();
 #endif
+    }
+
+    private void OnDestroy()
+    {
+        CallLua("OnPanelDestroyed", this);
+
+        if (startButton != null)
+        {
+            startButton.onClick.RemoveListener(InvokeStartButtonCallback);
+        }
+
+        if (quitButton != null)
+        {
+            quitButton.onClick.RemoveListener(InvokeQuitButtonCallback);
+        }
+
+        startButtonCallback = null;
+        quitButtonCallback = null;
     }
 }
