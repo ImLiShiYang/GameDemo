@@ -1,3 +1,4 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -11,6 +12,9 @@ public class TutorialPanel : UIBase
             TutorialPlayerPrefsKey,
             0
         ) == 1;
+    
+    [SerializeField]
+    private TMP_Text tutorialText;
 
     [SerializeField]
     private Button confirmButton;
@@ -30,6 +34,46 @@ public class TutorialPanel : UIBase
         }
     }
 
+    private void RefreshTutorialText()
+    {
+        if (tutorialText == null)
+        {
+            return;
+        }
+
+        string primarySkillName =
+            "冲击波";
+
+        string secondarySkillName =
+            "穿透射线";
+
+        SkillManager skillManager =
+            GameEntry.Skill;
+
+        if (skillManager != null)
+        {
+            primarySkillName =
+                skillManager.GetSkillDisplayName(
+                    PlayerSkillInput.PrimarySkillId
+                );
+
+            secondarySkillName =
+                skillManager.GetSkillDisplayName(
+                    PlayerSkillInput.SecondarySkillId
+                );
+        }
+
+        tutorialText.text =
+            "WASD：移动\n" +
+            "鼠标：瞄准\n" +
+            "鼠标左键：射击\n" +
+            "Left Shift：翻滚\n" +
+            $"{PlayerSkillInput.PrimarySkillKeyText}：" +
+            $"{primarySkillName}\n" +
+            $"{PlayerSkillInput.SecondarySkillKeyText}：" +
+            $"{secondarySkillName}";
+    }
+    
     protected override void OnOpen(object args)
     {
         if (!pauseGame)

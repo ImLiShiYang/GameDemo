@@ -2,12 +2,13 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.Serialization;
 
 public enum HUDSkillSlot
 {
     Roll,
-    Q,
-    E
+    PrimarySkill,
+    SecondarySkill
 }
 
 public class HUDOpenArgs
@@ -64,11 +65,28 @@ public class HUDPanel : UIBase
     [SerializeField]
     private Image rollCooldownFill;
 
+    [FormerlySerializedAs("qCooldownFill")]
     [SerializeField]
-    private Image qCooldownFill;
+    private Image primarySkillCooldownFill;
+
+    [FormerlySerializedAs("eCooldownFill")]
+    [SerializeField]
+    private Image secondarySkillCooldownFill;
+    
+    [Header("Skill Key Text")]
+    [SerializeField]
+    private TMP_Text primarySkillKeyText;
 
     [SerializeField]
-    private Image eCooldownFill;
+    private TMP_Text secondarySkillKeyText;
+    
+    [Header("Skill Cooldown Text")]
+    [SerializeField] 
+    private TMP_Text primarySkillCooldownText;
+    [SerializeField] 
+    private TMP_Text secondarySkillCooldownText;
+
+    private SkillManager skillManager;
 
     [Header("Wave")]
     [SerializeField]
@@ -113,12 +131,80 @@ public class HUDPanel : UIBase
             bossRoot.SetActive(false);
         }
 
-        SetCooldown(HUDSkillSlot.Roll, 0f);
-        SetCooldown(HUDSkillSlot.Q, 0f);
-        SetCooldown(HUDSkillSlot.E, 0f);
+        SetCooldown(
+            HUDSkillSlot.Roll,
+            0f
+        );
+
+        SetCooldown(
+            HUDSkillSlot.PrimarySkill,
+            0f
+        );
+
+        SetCooldown(
+            HUDSkillSlot.SecondarySkill,
+            0f
+        );
+
+        if (primarySkillKeyText != null)
+        {
+            primarySkillKeyText.text =
+                PlayerSkillInput.PrimarySkillKeyText;
+        }
+
+        if (secondarySkillKeyText != null)
+        {
+            secondarySkillKeyText.text =
+                PlayerSkillInput.SecondarySkillKeyText;
+        }
+        
+        SetSkillCooldownText(primarySkillCooldownText, 0f);
+        SetSkillCooldownText(secondarySkillCooldownText, 0f);
 
         SetWave(0, 0);
         SetEnemyCount(0);
+    }
+    
+    private void Update()
+    {
+        RefreshSkillCooldowns();
+    }
+    
+    private void RefreshSkillCooldowns()
+    {
+        if (skillManager == null)
+        {
+            skillManager = GameEntry.Skill;
+        }
+
+        if (skillManager == null)
+        {
+            SetSkillCooldownText(primarySkillCooldownText, 0f);
+            SetSkillCooldownText(secondarySkillCooldownText, 0f);
+            return;
+        }
+
+        float primaryRemaining = skillManager.GetRemainingCooldown(PlayerSkillInput.PrimarySkillId);
+        float secondaryRemaining = skillManager.GetRemainingCooldown(PlayerSkillInput.SecondarySkillId);
+
+        SetSkillCooldownText(primarySkillCooldownText, primaryRemaining);
+        SetSkillCooldownText(secondarySkillCooldownText, secondaryRemaining);
+    }
+    
+    private void SetSkillCooldownText(TMP_Text target, float remaining)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        if (remaining <= 0f)
+        {
+            target.text = "";
+            return;
+        }
+
+        target.text = Mathf.CeilToInt(remaining).ToString();
     }
 
     protected override void OnOpen(object args)
@@ -405,12 +491,14 @@ public class HUDPanel : UIBase
                 target = rollCooldownFill;
                 break;
 
-            case HUDSkillSlot.Q:
-                target = qCooldownFill;
+            case HUDSkillSlot.PrimarySkill:
+                target =
+                    primarySkillCooldownFill;
                 break;
 
-            case HUDSkillSlot.E:
-                target = eCooldownFill;
+            case HUDSkillSlot.SecondarySkill:
+                target =
+                    secondarySkillCooldownFill;
                 break;
         }
 

@@ -30,6 +30,28 @@ public class SkillManager : MonoBehaviour
     private float piercingBeamEffectLifeTime = 0.2f;
     
     private const string SkillConfigModule ="Skill.SkillConfig";
+    
+    private sealed class SkillRuntimeConfig
+    {
+        public string Id;
+        public string DisplayName;
+        public string Executor;
+
+        public float Damage;
+        public float Range;
+        public float Cooldown;
+        public float WarningTime;
+        public int InterruptPower;
+    }
+
+    private delegate void SkillExecutor(
+        SkillRuntimeConfig config
+    );
+
+    private readonly Dictionary<string, SkillExecutor>skillExecutors =new Dictionary<string, SkillExecutor>();
+
+    
+    private readonly Dictionary<string, float> cooldownDurations = new Dictionary<string, float>();
 
     /// <summary>
     /// 每个技能下一次允许释放的时间。
@@ -42,14 +64,22 @@ public class SkillManager : MonoBehaviour
     /// </summary>
     private readonly Dictionary<string, float> nextCastTimes =new Dictionary<string, float>();
 
+
     private void Awake()
     {
         if (playerController == null && player != null)
         {
             playerController = player.GetComponent<GrayboxPlayerController>();
         }
+        RegisterSkillExecutors();
     }
 
+    private void RegisterSkillExecutors()
+    {
+        skillExecutors["ShockWave"] = ExecuteShockWaveSkill;
+        skillExecutors["PiercingBeam"] = ExecutePiercingBeamSkill;
+    }
+    
     private void DetectEnemiesInRange(string skillId,float range)
     {
         if (player == null)
@@ -123,6 +153,54 @@ public class SkillManager : MonoBehaviour
             return;
         }
 
+        if (!TryGetSkillConfig(skillId,out SkillRuntimeConfig config))
+        {
+            return;
+        }
+
+        if (!skillExecutors.TryGetValue(config.Executor,out SkillExecutor executor))
+        {
+            Debug.LogError(
+                $"技能 {config.Id} 找不到执行器：" +
+                $"{config.Executor}",
+                this
+            );
+
+            return;
+        }
+
+        if (!CanCast(config.Id,out float remainingCooldown))
+        {
+            Debug.Log(
+                $"技能 {config.DisplayName} 冷却中，" +
+                $"剩余 {remainingCooldown:F2} 秒。",
+                this
+            );
+
+            return;
+        }
+
+        StartCooldown(config.Id,config.Cooldown);
+
+        executor(config);
+
+        Debug.Log(
+            $"释放技能：{config.DisplayName} | " +
+            $"ID：{config.Id} | " +
+            $"Executor：{config.Executor} | " +
+            $"伤害：{config.Damage} | " +
+            $"范围：{config.Range} | " +
+            $"冷却：{config.Cooldown}",
+            this
+        );
+    }
+    
+    private bool TryGetSkillConfig(
+        string skillId,
+        out SkillRuntimeConfig config)
+    {
+        config = null;
+
         LuaManager luaManager = GameEntry.Lua;
 
         if (luaManager == null)
@@ -132,95 +210,98 @@ public class SkillManager : MonoBehaviour
                 this
             );
 
-            return;
+            return false;
         }
 
-        // 1. 从 Lua 获取技能配置
-        object[] results =luaManager.CallWithResults(SkillConfigModule,"GetSkillValues",skillId);
+        object[] results =
+            luaManager.CallWithResults(
+                SkillConfigModule,
+                "GetSkillValues",
+                skillId
+            );
 
-        if (results == null || results.Length < 5)
+        if (results == null ||
+            results.Length < 8 ||
+            results[0] == null)
         {
             Debug.LogError(
                 $"读取技能配置失败：{skillId}",
                 this
             );
 
-            return;
+            return false;
         }
 
-        float damage =
-            Convert.ToSingle(results[0]);
-
-        float range =
-            Convert.ToSingle(results[1]);
-
-        float cooldown =
-            Convert.ToSingle(results[2]);
-
-        float warningTime =
-            Convert.ToSingle(results[3]);
-
-        int interruptPower =
-            Mathf.Max(0, Convert.ToInt32(results[4]));
-
-        // 2. 判断技能是否还在冷却
-        if (!CanCast(skillId, out float remainingCooldown))
+        try
         {
-            Debug.Log(
-                $"技能 {skillId} 冷却中，" +
-                $"剩余 {remainingCooldown:F2} 秒。",
+            config = new SkillRuntimeConfig
+            {
+                Id =
+                    Convert.ToString(results[0]),
+
+                DisplayName =
+                    Convert.ToString(results[1]),
+
+                Executor =
+                    Convert.ToString(results[2]),
+
+                Damage =
+                    Convert.ToSingle(results[3]),
+
+                Range =
+                    Convert.ToSingle(results[4]),
+
+                Cooldown =
+                    Convert.ToSingle(results[5]),
+
+                WarningTime =
+                    Convert.ToSingle(results[6]),
+
+                InterruptPower =
+                    Mathf.Max(
+                        0,
+                        Convert.ToInt32(results[7])
+                    )
+            };
+
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError(
+                $"解析技能配置失败：{skillId}\n" +
+                exception,
                 this
             );
 
-            return;
+            config = null;
+
+            return false;
         }
-
-        // 3. 技能允许释放，开始进入冷却
-        StartCooldown(skillId,cooldown);
-        
-        // DetectEnemiesInRange(skillId,range);
-        
-        ExecuteSkill(skillId,damage,range,warningTime,interruptPower);
-        
-
-        // 4. 目前先只打印，下一步再真正执行技能
-        Debug.Log(
-            $"释放技能：{skillId} | " +
-            $"伤害：{damage} | " +
-            $"范围：{range} | " +
-            $"冷却：{cooldown} | " +
-            $"预警：{warningTime} | " +
-            $"打断力：{interruptPower}",
-            this
-        );
     }
     
-    private void ExecuteSkill(
-        string skillId,
-        float damage,
-        float range,
-        float warningTime,
-        int interruptPower)
+    private void ExecuteShockWaveSkill(SkillRuntimeConfig config)
     {
-        switch (skillId)
-        {
-            case "ShockWave":
-                StartCoroutine(ExecuteShockWaveRoutine(
-                    damage,
-                    range,
-                    warningTime,
-                    interruptPower));
-                break;
-
-            case "PiercingBeam":
-                ExecutePiercingBeam(damage, range, interruptPower);
-                break;
-
-            default:
-                Debug.LogWarning($"没有对应的技能执行逻辑：{skillId}", this);
-                break;
-        }
+        StartCoroutine(
+            ExecuteShockWaveRoutine(
+                config.Damage,
+                config.Range,
+                config.WarningTime,
+                config.InterruptPower
+            )
+        );
     }
+
+    private void ExecutePiercingBeamSkill(
+        SkillRuntimeConfig config)
+    {
+        ExecutePiercingBeam(
+            config.Damage,
+            config.Range,
+            config.InterruptPower
+        );
+    }
+
     
     private void ExecutePiercingBeam(
         float damage,
@@ -503,11 +584,71 @@ public class SkillManager : MonoBehaviour
     /// <summary>
     /// 让指定技能进入冷却。
     /// </summary>
-    private void StartCooldown(
-        string skillId,
-        float cooldown)
+    private void StartCooldown( string skillId,float cooldown)
     {
+        float duration =
+            Mathf.Max(0f, cooldown);
+
+        cooldownDurations[skillId] =
+            duration;
+
         nextCastTimes[skillId] =
-            Time.time + cooldown;
+            Time.time + duration;
     }
+    
+    public float GetRemainingCooldown(string skillId)
+    {
+        if (string.IsNullOrWhiteSpace(skillId))
+        {
+            return 0f;
+        }
+
+        if (!nextCastTimes.TryGetValue(
+                skillId,
+                out float nextCastTime))
+        {
+            return 0f;
+        }
+
+        return Mathf.Max(
+            0f,
+            nextCastTime - Time.time
+        );
+    }
+    
+    public float GetCooldownNormalized(
+        string skillId)
+    {
+        if (!cooldownDurations.TryGetValue(
+                skillId,
+                out float duration))
+        {
+            return 0f;
+        }
+
+        if (duration <= 0f)
+        {
+            return 0f;
+        }
+
+        float remaining =
+            GetRemainingCooldown(skillId);
+
+        return Mathf.Clamp01(
+            remaining / duration
+        );
+    }
+    
+    public string GetSkillDisplayName(string skillId)
+    {
+        if (TryGetSkillConfig(
+                skillId,
+                out SkillRuntimeConfig config))
+        {
+            return config.DisplayName;
+        }
+
+        return skillId;
+    }
+    
 }

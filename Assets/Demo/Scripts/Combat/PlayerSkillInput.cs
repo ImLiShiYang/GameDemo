@@ -2,26 +2,47 @@ using UnityEngine;
 
 public class PlayerSkillInput : MonoBehaviour
 {
+    public const string PrimarySkillId =
+        "ShockWave";
+
+    public const string SecondarySkillId =
+        "PiercingBeam";
+
+    public const KeyCode PrimarySkillKey =
+        KeyCode.R;
+
+    public const KeyCode SecondarySkillKey =
+        KeyCode.F;
+
+    public static string PrimarySkillKeyText =>
+        PrimarySkillKey.ToString();
+
+    public static string SecondarySkillKeyText =>
+        SecondarySkillKey.ToString();
+
     private void Update()
     {
-        if (Input.GetKeyDown(KeyCode.R))
+        if (Time.timeScale <= 0f)
         {
-            CastSkill1();
+            return;
         }
 
-        if (Input.GetKeyDown(KeyCode.F))
+        SkillManager skillManager =
+            GameEntry.Skill;
+
+        if (skillManager == null)
         {
-            CastSkill2();
+            return;
         }
-    }
 
-    private void CastSkill1()
-    {
-        GameEntry.Skill.CastSkill("ShockWave");
-    }
+        if (Input.GetKeyDown(PrimarySkillKey))
+        {
+            skillManager.CastSkill(PrimarySkillId);
+        }
 
-    private void CastSkill2()
-    {
-        GameEntry.Skill.CastSkill("PiercingBeam");
+        if (Input.GetKeyDown(SecondarySkillKey))
+        {
+            skillManager.CastSkill(SecondarySkillId);
+        }
     }
 }
