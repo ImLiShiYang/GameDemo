@@ -31,6 +31,33 @@ public class GameEntry : MonoBehaviour
     [SerializeField]
     private SkillManager skillManager;
     
+    [SerializeField]
+    private BuffManager buffManager;
+    
+    public static BuffManager Buff
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError("场景中没有 GameEntry。");
+                return null;
+            }
+
+            if (Instance.buffManager == null)
+            {
+                Debug.LogError(
+                    "GameEntry 没有找到 BuffManager。",
+                    Instance
+                );
+
+                return null;
+            }
+
+            return Instance.buffManager;
+        }
+    }
+    
     public static SkillManager Skill
     {
         get
@@ -248,6 +275,16 @@ public class GameEntry : MonoBehaviour
                 gameObject.AddComponent<SkillManager>();
         }
         
+        if (buffManager == null)
+        {
+            buffManager = GetComponentInChildren<BuffManager>(true);
+        }
+
+        if (buffManager == null)
+        {
+            buffManager = gameObject.AddComponent<BuffManager>();
+        }
+        
         
         if (poolManager == null)
         {
@@ -285,6 +322,14 @@ public class GameEntry : MonoBehaviour
         {
             Debug.LogError(
                 "GameEntry 没有成功创建 skillManager。",
+                this
+            );
+        }
+        
+        if (buffManager == null)
+        {
+            Debug.LogError(
+                "GameEntry 没有成功创建 buffManager。",
                 this
             );
         }

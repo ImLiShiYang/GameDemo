@@ -51,6 +51,16 @@ public class HUDPanel : UIBase
     [SerializeField]
     private TMP_Text healthText;
 
+    [Header("Player Shield")]
+    [SerializeField]
+    private GameObject shieldRoot;
+
+    [SerializeField]
+    private Slider shieldSlider;
+
+    [SerializeField]
+    private TMP_Text shieldText;
+
     [Header("Experience")]
     [SerializeField]
     private Slider experienceSlider;
@@ -130,6 +140,8 @@ public class HUDPanel : UIBase
         {
             bossRoot.SetActive(false);
         }
+
+        SetShield(0f, 0f);
 
         SetCooldown(
             HUDSkillSlot.Roll,
@@ -321,6 +333,7 @@ public class HUDPanel : UIBase
         {
             playerHealth.Damaged += HandlePlayerDamaged;
             playerHealth.Died += HandlePlayerDied;
+            playerHealth.ShieldChanged += HandleShieldChanged;
         }
 
         if (playerExperience != null)
@@ -333,6 +346,7 @@ public class HUDPanel : UIBase
         }
 
         RefreshPlayerHealth();
+        RefreshPlayerShield();
         RefreshExperience();
     }
 
@@ -342,6 +356,7 @@ public class HUDPanel : UIBase
         {
             playerHealth.Damaged -= HandlePlayerDamaged;
             playerHealth.Died -= HandlePlayerDied;
+            playerHealth.ShieldChanged -= HandleShieldChanged;
         }
 
         if (playerExperience != null)
@@ -366,6 +381,13 @@ public class HUDPanel : UIBase
     private void HandlePlayerDied()
     {
         RefreshPlayerHealth();
+    }
+
+    private void HandleShieldChanged(
+        float current,
+        float capacity)
+    {
+        SetShield(current, capacity);
     }
 
     private void RefreshPlayerHealth()
@@ -404,6 +426,47 @@ public class HUDPanel : UIBase
             healthText.text =
                 $"{Mathf.CeilToInt(current)} / " +
                 $"{Mathf.CeilToInt(max)}";
+        }
+    }
+
+    private void RefreshPlayerShield()
+    {
+        if (playerHealth == null)
+        {
+            SetShield(0f, 0f);
+            return;
+        }
+
+        SetShield(
+            playerHealth.CurrentShield,
+            playerHealth.ShieldCapacity
+        );
+    }
+
+    private void SetShield(float current, float capacity)
+    {
+        current = Mathf.Max(0f, current);
+        capacity = Mathf.Max(0f, capacity);
+
+        bool visible = current > 0f && capacity > 0f;
+
+        if (shieldRoot != null)
+        {
+            shieldRoot.SetActive(visible);
+        }
+
+        if (shieldSlider != null)
+        {
+            shieldSlider.minValue = 0f;
+            shieldSlider.maxValue = Mathf.Max(1f, capacity);
+            shieldSlider.value = current;
+        }
+
+        if (shieldText != null)
+        {
+            shieldText.text = visible
+                ? $"{Mathf.CeilToInt(current)} / {Mathf.CeilToInt(capacity)}"
+                : string.Empty;
         }
     }
 
@@ -650,10 +713,7 @@ public class HUDPanel : UIBase
             return;
         }
 
-        if (!buffItems.TryGetValue(
-                data.Id,
-                out UIBuffItem item) ||
-            item == null)
+        if (!buffItems.TryGetValue(data.Id,out UIBuffItem item) || item == null)
         {
             item = Instantiate(
                 buffItemPrefab,

@@ -603,9 +603,7 @@ public class SkillManager : MonoBehaviour
             return 0f;
         }
 
-        if (!nextCastTimes.TryGetValue(
-                skillId,
-                out float nextCastTime))
+        if (!nextCastTimes.TryGetValue( skillId,out float nextCastTime))
         {
             return 0f;
         }

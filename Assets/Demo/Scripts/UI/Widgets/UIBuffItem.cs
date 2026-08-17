@@ -15,10 +15,7 @@ public class UIBuffItem : MonoBehaviour
     [SerializeField]
     private TMP_Text stackText;
 
-    public void SetData(
-        Sprite sprite,
-        int stack,
-        float normalizedRemaining)
+    public void SetData(Sprite sprite,int stack,float normalizedRemaining)
     {
         if (icon != null)
         {
