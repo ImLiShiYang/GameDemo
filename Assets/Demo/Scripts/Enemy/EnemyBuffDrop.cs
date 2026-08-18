@@ -22,10 +22,24 @@ public class EnemyBuffDrop : MonoBehaviour
 
     private Health health;
     private Transform player;
+    private PoolManager poolManager;
 
     private void Awake()
     {
         health = GetComponent<Health>();
+    }
+
+    private void Start()
+    {
+        poolManager = GameEntry.Pool;
+
+        if (poolManager == null)
+        {
+            return;
+        }
+
+        poolManager.WarmBuffPickupPool(speedBuffPrefab);
+        poolManager.WarmBuffPickupPool(shieldBuffPrefab);
     }
 
     private void OnEnable()
@@ -77,11 +91,26 @@ public class EnemyBuffDrop : MonoBehaviour
                 randomOffset.y
             );
 
-        BuffPickup pickup = Instantiate(
-            prefab,
-            spawnPosition,
-            Quaternion.identity
-        );
+        if (poolManager == null)
+        {
+            poolManager = GameEntry.Pool;
+        }
+
+        BuffPickup pickup = poolManager != null
+            ? poolManager.GetBuffPickup(
+                prefab,
+                spawnPosition,
+                Quaternion.identity)
+            : Instantiate(
+                prefab,
+                spawnPosition,
+                Quaternion.identity);
+
+        if (pickup == null)
+        {
+            Debug.LogWarning("Buff pickup pool could not provide an instance.", this);
+            return;
+        }
 
         pickup.Initialize(player);
     }

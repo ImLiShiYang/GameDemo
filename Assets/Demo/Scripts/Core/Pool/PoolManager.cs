@@ -24,6 +24,10 @@ public class PoolManager : MonoBehaviour
     [SerializeField, Min(0)] private int experienceOrbPrewarmCount = 20;
     [SerializeField, Min(1)] private int experienceOrbMaxSize = 128;
 
+    [Header("Buff Pickup Pool")]
+    [SerializeField, Min(0)] private int buffPickupPrewarmCountPerPrefab = 2;
+    [SerializeField, Min(1)] private int buffPickupMaxSizePerPrefab = 16;
+
     [Header("VFX Pool")]
 
     [Header("Enemy Pool")]
@@ -37,6 +41,7 @@ public class PoolManager : MonoBehaviour
     private Transform enemyRoot;
     private Transform damageNumberRoot;
     private Transform experienceOrbRoot;
+    private Transform buffPickupRoot;
     private Transform vfxRoot;
 
     private GameObjectPool bulletPool;
@@ -50,6 +55,7 @@ public class PoolManager : MonoBehaviour
 
     private GameObjectPool experienceOrbPool;
     private GameObject experienceOrbPrefabKey;
+    private readonly Dictionary<GameObject, GameObjectPool> buffPickupPools = new();
     private readonly Dictionary<GameObject, GameObjectPool> enemyPools = new();
 
     private readonly Dictionary<GameObject, GameObjectPool> vfxPools = new();
@@ -62,6 +68,7 @@ public class PoolManager : MonoBehaviour
         damageNumberRoot = CreateCategoryRoot("DamageNumber Pool");
         vfxRoot = CreateCategoryRoot("VFX Pool");
         experienceOrbRoot = CreateCategoryRoot("ExperienceOrb Pool");
+        buffPickupRoot = CreateCategoryRoot("BuffPickup Pool");
     }
 
 
@@ -137,6 +144,17 @@ public class PoolManager : MonoBehaviour
             "ExperienceOrb Pool"
         );
     }
+
+    public void WarmBuffPickupPool(BuffPickup prefab)
+    {
+        if (prefab == null)
+        {
+            return;
+        }
+
+        GetOrCreateBuffPickupPool(prefab.gameObject);
+    }
+
     public void WarmVFXPool(GameObject prefab)
     {
         if (prefab == null)
@@ -281,6 +299,22 @@ public class PoolManager : MonoBehaviour
 
     }
 
+    public BuffPickup GetBuffPickup(
+        BuffPickup prefab,
+        Vector3 position,
+        Quaternion rotation)
+    {
+        if (prefab == null)
+        {
+            Debug.LogError("GetBuffPickup received a null prefab.", this);
+            return null;
+        }
+
+        return GetOrCreateBuffPickupPool(prefab.gameObject)
+            .Get(position, rotation)
+            .GetComponent<BuffPickup>();
+    }
+
     /// <summary>
     /// VFX Pool 允许同时管理多个不同的特效 Prefab。
     /// 每个 Prefab 内部拥有自己的 GameObjectPool，但统一收纳在 VFX Pool 节点下。
@@ -355,6 +389,27 @@ public class PoolManager : MonoBehaviour
         );
 
         vfxPools.Add(prefab, newPool);
+        return newPool;
+    }
+
+    private GameObjectPool GetOrCreateBuffPickupPool(GameObject prefab)
+    {
+        if (buffPickupPools.TryGetValue(prefab, out GameObjectPool existingPool))
+        {
+            return existingPool;
+        }
+
+        Transform prefabPoolRoot = new GameObject(prefab.name).transform;
+        prefabPoolRoot.SetParent(buffPickupRoot, false);
+
+        GameObjectPool newPool = new GameObjectPool(
+            prefab,
+            prefabPoolRoot,
+            buffPickupPrewarmCountPerPrefab,
+            buffPickupMaxSizePerPrefab
+        );
+
+        buffPickupPools.Add(prefab, newPool);
         return newPool;
     }
 

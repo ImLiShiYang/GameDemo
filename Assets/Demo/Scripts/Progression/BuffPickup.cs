@@ -37,6 +37,7 @@ public class BuffPickup : MonoBehaviour
     private bool isAttracted;
     private bool collected;
     private float currentMoveSpeed;
+    private PooledObject pooledObject;
 
     private void OnDisable()
     {
@@ -114,6 +115,23 @@ public class BuffPickup : MonoBehaviour
 
         buffManager.AddBuff(buffId);
 
+        ReleaseSelf();
+    }
+
+    private void ReleaseSelf()
+    {
+        if (pooledObject == null)
+        {
+            pooledObject = GetComponent<PooledObject>();
+        }
+
+        if (pooledObject != null)
+        {
+            pooledObject.Release();
+            return;
+        }
+
+        // 兼容未通过对象池创建的测试实例。
         Destroy(gameObject);
     }
 }
