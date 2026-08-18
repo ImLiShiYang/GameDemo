@@ -17,6 +17,21 @@ local buffs =
         value = 25,
 
         iconPath = "UI/Buffs/EnergyShield"
+    }),
+    
+    SpeedBoost = BuffBase.New(
+    {
+        id = "SpeedBoost",
+        name = "加速",
+    
+        duration = 6,
+        maxStack = 3,
+        refreshOnAdd = true,
+    
+        effectType = "MoveSpeed",
+        value = 0.2,
+    
+        iconPath = "UI/Buffs/SpeedBoost"
     })
 }
 

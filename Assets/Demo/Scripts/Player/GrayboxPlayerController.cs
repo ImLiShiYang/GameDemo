@@ -90,6 +90,13 @@ public class GrayboxPlayerController : MonoBehaviour
 
     public bool IsInvincible => isInvincible;
 
+    private float moveSpeedMultiplier = 1f;
+
+    public void SetMoveSpeedMultiplier(float multiplier)
+    {
+        moveSpeedMultiplier = Mathf.Max(0f, multiplier);
+    }
+    
     private bool isRecoveringAimAfterRoll;
 
     private Vector3 moveInputDirection;
@@ -491,9 +498,9 @@ public class GrayboxPlayerController : MonoBehaviour
             acceleration * Time.deltaTime
         );
 
-        characterController.SimpleMove(
-            currentMoveDirection * walkSpeed
-        );
+        characterController.SimpleMove(currentMoveDirection * walkSpeed *moveSpeedMultiplier);
+            
+       
     }
 
     /// <summary>

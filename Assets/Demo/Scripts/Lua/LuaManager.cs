@@ -411,9 +411,7 @@ public sealed class LuaManager : MonoBehaviour
         return withoutBom;
     }
 
-    private void LogLuaException(
-        string context,
-        Exception exception)
+    private void LogLuaException(string context,Exception exception)
     {
         Debug.LogError(
             $"{context}\n{exception}",
