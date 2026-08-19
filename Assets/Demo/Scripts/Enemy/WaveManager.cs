@@ -69,6 +69,18 @@ public class WaveManager : MonoBehaviour
     [SerializeField, Min(0f)]
     private float nextWaveDelay = 3f;
 
+    [Header("Boss")]
+    [SerializeField] private GameObject bossPrefab;
+    [SerializeField] private Transform bossSpawnPoint;
+    [SerializeField, Min(0f)] private float bossSpawnDelay = 2f;
+    [SerializeField, Min(0f)]
+    [Tooltip("Boss 死亡后，显示胜利结算前的停留时间。")]
+    private float victoryDelay = 3f;
+    [SerializeField] private string bossName = "ABYSS GUARDIAN";
+
+    private Health currentBossHealth;
+
+
     [Header("Spawn")]
     [Tooltip(
         "开启后，同一波的近战/远程怪会混合生成，而不是先刷完一种再刷另一种。"
@@ -129,6 +141,7 @@ public class WaveManager : MonoBehaviour
     /// </summary>
     public event Action Victory;
     
+    public event Action<string, Health> BossSpawned;
 
     /// <summary>
     /// 开始整场波次。
@@ -235,7 +248,65 @@ public class WaveManager : MonoBehaviour
             }
         }
 
+        if (bossSpawnDelay > 0f)
+        {
+            yield return new WaitForSeconds(bossSpawnDelay);
+        }
+
+        currentBossHealth = SpawnBoss();
+
+        if (currentBossHealth == null)
+        {
+            waveRoutine = null;
+            isRunning = false;
+            yield break;
+        }
+
+        BossSpawned?.Invoke(bossName, currentBossHealth);
+
+        while (!currentBossHealth.IsDead)
+        {
+            yield return null;
+        }
+
+        currentBossHealth = null;
+
+        if (victoryDelay > 0f)
+        {
+            yield return new WaitForSeconds(victoryDelay);
+        }
+
         CompleteVictory();
+    }
+
+    private Health SpawnBoss()
+    {
+        if (bossPrefab == null)
+        {
+            Debug.LogError("WaveManager 没有设置 Boss Prefab。", this);
+            return null;
+        }
+
+        if (bossSpawnPoint == null)
+        {
+            Debug.LogError("WaveManager 没有设置 Boss Spawn Point。", this);
+            return null;
+        }
+
+        GameObject boss = Instantiate(bossPrefab, bossSpawnPoint.position, bossSpawnPoint.rotation);
+
+        Health health = boss.GetComponent<Health>();
+
+        if (health == null)
+        {
+            Debug.LogError($"{boss.name} 没有 Health。", boss);
+            Destroy(boss);
+            return null;
+        }
+
+        Debug.Log($"Boss 生成：{boss.name}", boss);
+
+        return health;
     }
 
     /// <summary>

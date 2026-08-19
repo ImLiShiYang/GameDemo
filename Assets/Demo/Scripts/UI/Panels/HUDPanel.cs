@@ -260,6 +260,8 @@ public class HUDPanel : UIBase
         waveManager.AliveEnemyCountChanged +=
             HandleAliveEnemyCountChanged;
 
+        waveManager.BossSpawned += HandleBossSpawned;
+        
         // HUD刚打开时立即同步一次当前状态。
         SetWave(
             waveManager.CurrentWaveNumber,
@@ -284,6 +286,8 @@ public class HUDPanel : UIBase
         waveManager.AliveEnemyCountChanged -=
             HandleAliveEnemyCountChanged;
 
+        waveManager.BossSpawned -= HandleBossSpawned;
+        
         waveManager = null;
     }
 
@@ -297,6 +301,11 @@ public class HUDPanel : UIBase
         );
     }
 
+    private void HandleBossSpawned(string bossName, Health health)
+    {
+        BindBoss(bossName, health);
+    }
+    
     private void HandleAliveEnemyCountChanged(
         int aliveCount)
     {
@@ -610,9 +619,7 @@ public class HUDPanel : UIBase
         }
     }
 
-    public void BindBoss(
-        string bossName,
-        Health health)
+    public void BindBoss(string bossName,Health health)
     {
         UnbindBoss();
 

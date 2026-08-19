@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEngine;
 
 public class GameResultController : MonoBehaviour
@@ -10,7 +11,13 @@ public class GameResultController : MonoBehaviour
     [SerializeField]
     private Health playerHealth;
 
+    [Header("Timing")]
+    [SerializeField, Min(0f)]
+    [Tooltip("玩家死亡后，显示失败结算前的停留时间。")]
+    private float defeatDelay = 3f;
+
     private bool gameEnded;
+    private bool resultPending;
     private WaveManager waveManager;
 
     private void Awake()
@@ -66,12 +73,33 @@ public class GameResultController : MonoBehaviour
 
     private void HandlePlayerDied()
     {
-        ShowDefeat();
+        if (gameEnded || resultPending)
+        {
+            return;
+        }
+
+        resultPending = true;
+        StartCoroutine(ShowDefeatAfterDelay());
     }
 
     private void HandleVictory()
     {
+        if (gameEnded || resultPending)
+        {
+            return;
+        }
+
         ShowVictory();
+    }
+
+    private IEnumerator ShowDefeatAfterDelay()
+    {
+        if (defeatDelay > 0f)
+        {
+            yield return new WaitForSeconds(defeatDelay);
+        }
+
+        ShowDefeat();
     }
 
     public void ShowDefeat()
@@ -82,6 +110,7 @@ public class GameResultController : MonoBehaviour
         }
 
         gameEnded = true;
+        resultPending = false;
         HasGameEnded = true;
         GameEnded?.Invoke();
 
@@ -100,6 +129,7 @@ public class GameResultController : MonoBehaviour
         }
 
         gameEnded = true;
+        resultPending = false;
         HasGameEnded = true;
         GameEnded?.Invoke();
 
