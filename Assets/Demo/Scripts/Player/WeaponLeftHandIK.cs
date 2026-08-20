@@ -3,6 +3,10 @@ using UnityEngine.Serialization;
 
 public class WeaponLeftHandIK : MonoBehaviour
 {
+    [Header("Legacy Animator IK")]
+    [Tooltip("仅在没有使用 Animation Rigging 的旧场景中开启。当前 AimRig 场景必须保持关闭，避免两套 IK 同时控制左手。")]
+    [SerializeField] private bool enableLegacyAnimatorIK;
+
     [SerializeField] private Animator animator;
     [SerializeField] private Transform leftHandGrip;
 
@@ -21,8 +25,12 @@ public class WeaponLeftHandIK : MonoBehaviour
 
     private void OnAnimatorIK(int layerIndex)
     {
-        if (animator == null || leftHandGrip == null)
+        if (!enableLegacyAnimatorIK ||
+            animator == null ||
+            leftHandGrip == null)
+        {
             return;
+        }
 
         animator.SetIKPositionWeight(AvatarIKGoal.LeftHand, positionWeight);
         animator.SetIKRotationWeight(AvatarIKGoal.LeftHand, rotationWeight);

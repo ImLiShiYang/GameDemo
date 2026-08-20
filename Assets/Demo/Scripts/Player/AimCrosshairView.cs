@@ -114,7 +114,7 @@ public class AimCrosshairView : MonoBehaviour
         if (aimSource == null ||
             visualRoot == null ||
             aimSource.IsRolling ||
-            !aimSource.HasMouseAimWorldPoint)
+            !aimSource.TryGetCrosshairWorldPoint(out Vector3 crosshairWorldPoint))
         {
             SetVisible(false);
             return;
@@ -122,13 +122,13 @@ public class AimCrosshairView : MonoBehaviour
 
         SetVisible(true);
 
-        UpdatePosition();
+        UpdatePosition(crosshairWorldPoint);
 
         if (facePlayer)
         {
             FacePlayer();
         }
-        
+
         UpdateScale();
     }
 
@@ -189,11 +189,12 @@ public class AimCrosshairView : MonoBehaviour
             Vector3.one * scale;
     }
     
-    private void UpdatePosition()
+    /// <summary>
+    /// 将世界空间准心移动到当前枪械实际瞄准目标点。
+    /// 准心与 AimTarget 使用同一个世界坐标，保证准心和枪械瞄准方向保持一致。
+    /// </summary>
+    private void UpdatePosition(Vector3 targetPosition)
     {
-        Vector3 targetPosition =
-            aimSource.MouseAimWorldPoint;
-
         if (!hasInitializedPosition || followSpeed <= 0f)
         {
             transform.position = targetPosition;
@@ -201,14 +202,8 @@ public class AimCrosshairView : MonoBehaviour
             return;
         }
 
-        float interpolation =
-            1f - Mathf.Exp(-followSpeed * Time.deltaTime);
-
-        transform.position = Vector3.Lerp(
-            transform.position,
-            targetPosition,
-            interpolation
-        );
+        float interpolation = 1f - Mathf.Exp(-followSpeed * Time.deltaTime);
+        transform.position = Vector3.Lerp(transform.position, targetPosition, interpolation);
     }
 
     private void FacePlayer()

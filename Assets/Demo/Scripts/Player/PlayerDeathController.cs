@@ -92,6 +92,9 @@ public class PlayerDeathController : MonoBehaviour
         // 死亡后禁止玩家继续移动、瞄准和翻滚。
         if (playerController != null)
         {
+            // 禁用控制器前先关闭 IK，并把枪挂到右手骨骼下，
+            // 让枪在死亡动画中继续跟随右手。
+            playerController.EnterDeathWeaponState();
             playerController.enabled = false;
         }
 
