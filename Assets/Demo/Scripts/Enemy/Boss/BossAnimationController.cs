@@ -9,7 +9,9 @@ public class BossAnimationController : MonoBehaviour
     private static readonly int SpeedHash = Animator.StringToHash("Speed");
     private static readonly int AttackHash = Animator.StringToHash("Attack");
     private static readonly int DeadHash = Animator.StringToHash("Dead");
-
+    private static readonly int ChargingHash = Animator.StringToHash("IsCharging");
+    private static readonly int SlamHash = Animator.StringToHash("Slam");
+        
     
 
     private void Awake()
@@ -34,6 +36,16 @@ public class BossAnimationController : MonoBehaviour
 
         float speed = agent.velocity.magnitude;
         animator.SetFloat(SpeedHash, speed, 0.1f, Time.deltaTime);
+    }
+    
+    public void SetCharging(bool value)
+    {
+        animator.SetBool(ChargingHash, value);
+    }
+    
+    public void SetSlam()
+    {
+        animator.SetTrigger(SlamHash);
     }
     
     public void PlayDead()

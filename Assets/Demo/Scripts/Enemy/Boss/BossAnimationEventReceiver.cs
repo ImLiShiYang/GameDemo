@@ -16,4 +16,20 @@ public class BossAnimationEventReceiver : MonoBehaviour
             bossController.AnimationEvent_AttackHit();
         }
     }
+    
+    public void AnimationEvent_SlamHit()
+    {
+        if (bossController != null)
+        {
+            bossController.AnimationEvent_SlamHit();
+        }
+    }
+    
+    public void AnimationEvent_SlamJump()
+    {
+        if (bossController != null)
+        {
+            bossController.AnimationEvent_SlamJump();
+        }
+    }
 }
