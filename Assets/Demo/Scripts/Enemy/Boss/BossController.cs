@@ -35,6 +35,14 @@ public class BossController : MonoBehaviour
         Impact,
         Recover
     }
+
+    private enum BossCombatAction
+    {
+        None,
+        Melee,
+        Charge,
+        Slam
+    }
     
     [Header("References")]
     [SerializeField] private NavMeshAgent agent;
@@ -119,6 +127,28 @@ public class BossController : MonoBehaviour
     [SerializeField] private float slamWarningHeight = 0.05f;
 
     [SerializeField, Min(0.1f)] private float slamWarningProjectionDepth = 2f;
+
+    [Header("Combat Decision")]
+    [Tooltip("处于 Chase 时重新评估战斗动作的时间间隔。")]
+    [SerializeField, Min(0.01f)] private float combatDecisionInterval = 0.15f;
+
+    [Tooltip("Charge 或 Slam 完整结束后，再次允许特殊技能的等待时间。")]
+    [SerializeField, Min(0f)] private float specialSkillGap = 0.8f;
+
+    [Tooltip("上一次特殊技能再次参与选择时的分数倍率。")]
+    [SerializeField, Range(0f, 1f)] private float repeatSkillPenalty = 0.35f;
+
+    [Tooltip("只在达到最高分这一比例的候选动作中进行加权随机。")]
+    [SerializeField, Range(0f, 1f)] private float topScoreSelectionRatio = 0.85f;
+
+    [SerializeField, Min(0f)] private float slamMinDecisionDistance = 2f;
+    [SerializeField, Min(0f)] private float slamPreferredDistance = 5.5f;
+    [SerializeField, Min(0f)] private float chargePreferredDistance = 10.5f;
+    [SerializeField, Range(-1f, 1f)] private float chargeMinFacingDot = 0.25f;
+
+    [SerializeField, Min(0f)] private float meleeUtilityWeight = 0.9f;
+    [SerializeField, Min(0f)] private float chargeUtilityWeight = 1f;
+    [SerializeField, Min(0f)] private float slamUtilityWeight = 1.05f;
     
 
     [Header("Animator")] 
@@ -134,6 +164,10 @@ public class BossController : MonoBehaviour
     // Boss 当前所处的大状态。
     // 例如：Chase、Attack、Charge、Slam、Dead。
     private BossState currentState;
+
+    private BossCombatAction lastSpecialAction;
+    private float nextCombatDecisionTime;
+    private float nextSpecialSkillTime;
 
     // 下一次允许进行普通攻击的时间。
     // 通过 Time.time >= nextAttackTime 判断普通攻击冷却是否结束。
@@ -385,6 +419,7 @@ public class BossController : MonoBehaviour
         if(slamPhase == SlamPhase.Recover && slamAnimationEntered && !isSlamAnimationPlaying)
         {
             RestoreSlamRootMotion();
+            ScheduleSpecialSkillGap();
             EnterChaseState();
         }
     }
@@ -676,28 +711,328 @@ public class BossController : MonoBehaviour
 
     private void UpdateChase(float distanceToPlayer)
     {
-        // 玩家已经进入普通攻击范围，优先进行普通攻击。
-        if (distanceToPlayer <= attackDistance)
+        if(Time.time >= nextCombatDecisionTime)
         {
-            EnterAttackState();
-            return;
+            nextCombatDecisionTime = Time.time + combatDecisionInterval;
+
+            BossCombatAction selectedAction =SelectCombatAction(distanceToPlayer);
+
+            switch(selectedAction)
+            {
+                case BossCombatAction.Melee:
+                    EnterAttackState();
+                    return;
+
+                case BossCombatAction.Charge:
+                    EnterChargeState();
+                    return;
+
+                case BossCombatAction.Slam:
+                    EnterSlamState();
+                    return;
+            }
         }
 
-        // 冲锋冷却结束，并且玩家处于适合冲锋的距离范围内，
-        // 就停止普通追击，进入 Charge 状态。
-        // if (Time.time >= nextChargeTime && distanceToPlayer >= chargeMinDistance && distanceToPlayer <= chargeMaxDistance)
-        // {
-        //     EnterChargeState();
-        //     return;
-        // }
+        UpdateChaseMovement(distanceToPlayer);
+    }
 
-        if(Time.time >= nextSlamTime && distanceToPlayer <= slamDistance)
+    /// <summary>
+    /// 根据 Boss 与玩家当前的距离，从普通攻击、冲锋、砸地三个战斗动作中选择一个。
+    /// 
+    /// 选择流程：
+    /// 1. 分别计算三个动作当前的 Utility 分数。
+    /// 2. 找出最高分。
+    /// 3. 只保留接近最高分的动作，分数过低的动作直接排除。
+    /// 4. 在剩余候选动作中，根据分数作为权重进行随机选择。
+    /// 
+    /// 这样既能让 Boss 优先选择当前最合适的技能，
+    /// 又不会每次都固定使用最高分技能，使战斗表现更加随机、自然。
+    /// </summary>
+    /// <param name="distanceToPlayer">Boss 与玩家之间的水平距离。</param>
+    /// <returns>本次选择出的战斗动作，如果没有任何可用动作则返回 None。</returns>
+    private BossCombatAction SelectCombatAction(float distanceToPlayer)
+    {
+        // 分别计算普通攻击、冲锋和砸地在当前情况下的适用分数。
+        // 分数越高，说明这个动作当前越适合使用。
+        float meleeScore = EvaluateMeleeUtility(distanceToPlayer);
+        float chargeScore = EvaluateChargeUtility(distanceToPlayer);
+        float slamScore = EvaluateSlamUtility(distanceToPlayer);
+
+        // 找出三个动作中的最高分。
+        float highestScore = Mathf.Max(meleeScore, Mathf.Max(chargeScore, slamScore));
+
+        // 如果三个动作的分数都为 0，
+        // 说明当前没有任何可以执行的攻击，例如技能都在冷却或距离不合适。
+        if(highestScore <= 0f)
         {
-            EnterSlamState();
-            return;
+            return BossCombatAction.None;
         }
-        
-        // 当前既不能普通攻击，也不满足冲锋条件，继续追击玩家。
+
+        // 计算进入最终随机选择的最低分数。
+        // 例如：
+        // highestScore = 1
+        // topScoreSelectionRatio = 0.85
+        // 那么只有分数 >= 0.85 的动作才能参与最终选择。
+        float selectionThreshold = highestScore * topScoreSelectionRatio;
+
+        // 低于阈值的动作权重直接设为 0，相当于从候选列表中排除。
+        // 达到阈值的动作，则直接使用自己的 Utility 分数作为随机权重。
+        float meleeWeight = meleeScore >= selectionThreshold ? meleeScore : 0f;
+        float chargeWeight = chargeScore >= selectionThreshold ? chargeScore : 0f;
+        float slamWeight = slamScore >= selectionThreshold ? slamScore : 0f;
+
+        // 计算所有候选动作的总权重。
+        float totalWeight = meleeWeight + chargeWeight + slamWeight;
+
+        // 在 0 ~ totalWeight 之间随机一个数，
+        // 后面根据各个技能占据的权重区间决定最终选中哪个动作。
+        float selection = Random.value * totalWeight;
+
+        // 普通攻击占据第一个权重区间：
+        // 0 ~ meleeWeight。
+        if(selection < meleeWeight)
+        {
+            return BossCombatAction.Melee;
+        }
+
+        // 如果没有落入普通攻击区间，
+        // 再减去冲锋权重，判断是否落入冲锋的权重区间。
+        if(selection < meleeWeight + chargeWeight)
+        {
+            return BossCombatAction.Charge;
+        }
+
+        // 前两个都没有选中时，剩下的候选就是 Slam。
+        return BossCombatAction.Slam;
+    }
+
+    private float EvaluateMeleeUtility(float distanceToPlayer)
+    {
+        if(Time.time < nextAttackTime ||
+           distanceToPlayer > attackDistance ||
+           attackDistance <= 0f)
+        {
+            return 0f;
+        }
+
+        float proximity = 1f - Mathf.Clamp01(
+            distanceToPlayer / attackDistance
+        );
+
+        return meleeUtilityWeight * Mathf.Lerp(0.75f, 1f, proximity);
+    }
+
+    /// <summary>
+    /// 计算当前情况下冲锋技能的 Utility 分数。
+    /// 
+    /// 主要考虑：
+    /// 1. 冲锋是否处于冷却状态。
+    /// 2. 特殊技能公共间隔是否结束。
+    /// 3. 玩家是否处于适合冲锋的距离范围。
+    /// 4. Boss 当前是否大致朝向玩家。
+    /// 5. 玩家距离是否接近冲锋的最佳距离。
+    /// 
+    /// 最终返回一个分数：
+    /// 分数越高，说明当前越适合使用冲锋。
+    /// 如果当前不能使用冲锋，则直接返回 0。
+    /// </summary>
+    /// <param name="distanceToPlayer">Boss 与玩家之间的水平距离。</param>
+    /// <returns>冲锋技能当前的 Utility 分数。</returns>
+    private float EvaluateChargeUtility(float distanceToPlayer)
+    {
+        // 以下任意条件成立，都说明当前不能使用冲锋：
+        // 1. 冲锋自身还在冷却。
+        // 2. 上一个特殊技能结束后的公共等待时间还没有结束。
+        // 3. 玩家距离太近。
+        // 4. 玩家距离太远。
+        if(Time.time < nextChargeTime || Time.time < nextSpecialSkillTime ||
+           distanceToPlayer < chargeMinDistance || distanceToPlayer > chargeMaxDistance)
+        {
+            return 0f;
+        }
+
+        // 计算 Boss 指向玩家的方向。
+        Vector3 toPlayer = player.position - transform.position;
+
+        // 冲锋只考虑水平面的方向，因此忽略 Y 轴高度差。
+        toPlayer.y = 0f;
+
+        // 如果 Boss 和玩家几乎处于同一个位置，
+        // 就无法得到有效的冲锋方向。
+        if(toPlayer.sqrMagnitude < 0.001f)
+        {
+            return 0f;
+        }
+
+        // 计算 Boss 当前朝向和玩家方向之间的点积。
+        //
+        // facingDot 越接近 1：
+        // Boss 越正对着玩家。
+        //
+        // facingDot 越接近 0：
+        // 玩家越偏向 Boss 的侧面。
+        //
+        // facingDot 小于 0：
+        // 玩家已经处于 Boss 身后。
+        float facingDot = Vector3.Dot(transform.forward, toPlayer.normalized);
+
+        // 如果 Boss 当前朝向玩家的程度太低，
+        // 就不允许发动冲锋。
+        //
+        // 这样可以避免 Boss 明明背对着玩家，
+        // 却突然瞬间转身发动冲锋。
+        if(facingDot < chargeMinFacingDot)
+        {
+            return 0f;
+        }
+
+        // 根据玩家当前距离计算“距离适合度”。
+        //
+        // chargeMinDistance：
+        // 冲锋允许的最近距离。
+        //
+        // chargePreferredDistance：
+        // 冲锋最理想的距离，在这里分数最高。
+        //
+        // chargeMaxDistance：
+        // 冲锋允许的最远距离。
+        //
+        // 玩家越接近 preferredDistance，distanceScore 越接近 1。
+        // 越接近最小/最大边界，distanceScore 越低。
+        float distanceScore = CalculateBandUtility(distanceToPlayer, chargeMinDistance, chargePreferredDistance, chargeMaxDistance);
+
+        // 把 facingDot 映射到 0 ~ 1。
+        //
+        // facingDot == chargeMinFacingDot 时：
+        // facingScore = 0。
+        //
+        // facingDot == 1 时：
+        // facingScore = 1。
+        //
+        // 也就是说 Boss 越正对玩家，朝向评分越高。
+        float facingScore = Mathf.InverseLerp(chargeMinFacingDot, 1f, facingDot);
+
+        // 计算冲锋最终基础分数。
+        //
+        // distanceScore：
+        // 当前距离是否适合冲锋。
+        //
+        // Mathf.Lerp(0.65f, 1f, facingScore)：
+        // 根据 Boss 朝向玩家的程度给分数增加一个倍率。
+        // 即使刚刚达到最低朝向要求，也保留 65% 分数；
+        // 完全正对玩家时则获得 100% 分数。
+        //
+        // chargeUtilityWeight：
+        // 冲锋整体的技能权重，可以用来调整冲锋相对于其他技能的优先级。
+        float score = distanceScore * Mathf.Lerp(0.65f, 1f, facingScore) * chargeUtilityWeight;
+
+        // 如果 Boss 上一次使用的特殊技能也是 Charge，
+        // 则给这次冲锋分数施加重复技能惩罚。
+        //
+        // 用来降低连续两次使用同一个特殊技能的概率。
+        return ApplyRepeatSkillPenalty(BossCombatAction.Charge, score);
+    }
+
+    private float EvaluateSlamUtility(float distanceToPlayer)
+    {
+        if(Time.time < nextSlamTime ||
+           Time.time < nextSpecialSkillTime ||
+           distanceToPlayer < slamMinDecisionDistance ||
+           distanceToPlayer > slamDistance)
+        {
+            return 0f;
+        }
+
+        float score = CalculateBandUtility(
+            distanceToPlayer,
+            slamMinDecisionDistance,
+            slamPreferredDistance,
+            slamDistance
+        ) * slamUtilityWeight;
+
+        return ApplyRepeatSkillPenalty(
+            BossCombatAction.Slam,
+            score
+        );
+    }
+
+    /// <summary>
+    /// 根据一个数值在“最小值 → 最佳值 → 最大值”区间中的位置，计算对应的 Utility 分数。
+    ///
+    /// 评分规则：
+    /// minimum 位置分数为 0。
+    /// preferred 位置分数为 1。
+    /// maximum 位置分数重新下降到 0。
+    ///
+    /// 整体形成一个类似三角形的评分曲线：
+    ///
+    /// minimum        preferred        maximum
+    ///    0  ----------  1  ----------  0
+    ///
+    /// 数值越接近 preferred，返回的分数越高。
+    /// 如果数值超出 minimum ~ maximum 范围，则直接返回 0。
+    /// </summary>
+    /// <param name="value">当前需要进行评分的数值。</param>
+    /// <param name="minimum">允许范围的最小值，此位置 Utility 为 0。</param>
+    /// <param name="preferred">最理想的数值，此位置 Utility 为 1。</param>
+    /// <param name="maximum">允许范围的最大值，此位置 Utility 为 0。</param>
+    /// <returns>0 ~ 1 之间的 Utility 分数。</returns>
+    private static float CalculateBandUtility(float value, float minimum, float preferred, float maximum)
+    {
+        // 如果最大值和最小值几乎相同，说明区间无效。
+        // 如果 value 已经超出允许范围，也没有评分意义。
+        if(maximum - minimum <= 0.001f || value < minimum || value > maximum)
+        {
+            return 0f;
+        }
+
+        // 确保 preferred 一定处于 minimum 和 maximum 之间。
+        //
+        // 这里额外保留 0.001f 的距离，
+        // 是为了防止 preferred 和 minimum / maximum 完全重合，
+        // 从而避免后面的 InverseLerp 出现无效区间。
+        preferred = Mathf.Clamp(preferred, minimum + 0.001f, maximum - 0.001f);
+
+        // value 位于 minimum → preferred 这一段时，
+        // 分数从 0 逐渐上升到 1。
+        //
+        // value == minimum  → 0
+        // value == preferred → 1
+        if(value <= preferred)
+        {
+            return Mathf.InverseLerp(minimum, preferred, value);
+        }
+
+        // value 位于 preferred → maximum 这一段时，
+        // 分数从 1 逐渐下降到 0。
+        //
+        // 这里故意把 InverseLerp 的参数顺序反过来：
+        // value == preferred → 1
+        // value == maximum   → 0
+        return Mathf.InverseLerp(maximum, preferred, value);
+    }
+
+    private float ApplyRepeatSkillPenalty(
+        BossCombatAction action,
+        float score)
+    {
+        return lastSpecialAction == action
+            ? score * repeatSkillPenalty
+            : score;
+    }
+
+    private void MarkSpecialActionStarted(BossCombatAction action)
+    {
+        lastSpecialAction = action;
+    }
+
+    private void ScheduleSpecialSkillGap()
+    {
+        nextSpecialSkillTime = Time.time + specialSkillGap;
+    }
+
+    private void UpdateChaseMovement(float distanceToPlayer)
+    {
         agent.isStopped = false;
 
         if (distanceToPlayer > walkDistance)
@@ -749,6 +1084,7 @@ public class BossController : MonoBehaviour
         bossAnimationController.SetSlam();
 
         nextSlamTime = Time.time + slamCooldown;
+        MarkSpecialActionStarted(BossCombatAction.Slam);
     }
     
     private void ShowSlamWarning()
@@ -944,6 +1280,7 @@ public class BossController : MonoBehaviour
 
         // 从这一刻开始计算下一次冲锋冷却。
         nextChargeTime = Time.time + chargeCooldown;
+        MarkSpecialActionStarted(BossCombatAction.Charge);
 
         Debug.Log($"{name} 开始蓄力冲锋，锁定方向：{chargeDirection}", this);
     }
@@ -1102,7 +1439,9 @@ public class BossController : MonoBehaviour
 
         // 关闭冲刺动画
         bossAnimationController.SetCharging(false);
-        
+
+        ScheduleSpecialSkillGap();
+
         // 恢复时间结束，重新进入正常追击状态。
         EnterChaseState();
     }
@@ -1124,6 +1463,8 @@ public class BossController : MonoBehaviour
         if (attackActive && attackAnimationEntered)
         {
             ResetAttackRuntime();
+            EnterChaseState();
+            return;
         }
 
         // 必须等攻击动画结束以后，
@@ -1158,6 +1499,7 @@ public class BossController : MonoBehaviour
     {
         currentState = BossState.Chase;
         agent.isStopped = false;
+        nextCombatDecisionTime = Time.time + combatDecisionInterval;
     }
 
     private void EnterAttackState()
@@ -1166,8 +1508,6 @@ public class BossController : MonoBehaviour
 
         agent.isStopped = true;
         agent.ResetPath();
-
-        nextAttackTime = Time.time;
     }
 
     private bool IsAttackAnimationPlaying()
