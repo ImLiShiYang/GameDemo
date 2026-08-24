@@ -12,6 +12,7 @@ public class BossController : MonoBehaviour
         Charge,
         // 砸地
         Slam,
+        Stunned,
         Dead
     }
     
@@ -62,6 +63,17 @@ public class BossController : MonoBehaviour
     [SerializeField] private float attackFacingAngle = 5f;
     [SerializeField] private float attackDamage = 30f;
     [SerializeField] private float attackHitTolerance = 0.5f;
+
+    [Header("Interrupt")]
+    [Tooltip("Interrupt power required to cancel an uncommitted Boss attack.")]
+    [SerializeField, Min(1)] private int interruptResistance = 2;
+
+    [Tooltip("How long the Boss remains stunned after an interrupt.")]
+    [SerializeField, Min(0f)] private float stunDuration = 0.8f;
+
+    [Tooltip("Temporary interrupt immunity after recovering from a stun.")]
+    [SerializeField, Min(0f)] private float interruptImmunityDuration = 0.35f;
+    
     
     [Header("Charge")]
     // 玩家至少距离 Boss 多远时，才允许使用冲锋。
@@ -193,6 +205,8 @@ public class BossController : MonoBehaviour
     // 下一次允许进行普通攻击的时间。
     // 通过 Time.time >= nextAttackTime 判断普通攻击冷却是否结束。
     private float nextAttackTime;
+    private float stunEndTime;
+    private float interruptImmunityEndTime;
 
     // 当前是否已经开启了一轮普通攻击。
     // 从触发攻击动画开始，到攻击动画播放结束期间为 true。
@@ -341,6 +355,7 @@ public class BossController : MonoBehaviour
     {
         if (health != null)
         {
+            health.Damaged += OnDamaged;
             health.Died += HandleDied;
         }
     }
@@ -349,12 +364,81 @@ public class BossController : MonoBehaviour
     {
         if (health != null)
         {
+            health.Damaged -= OnDamaged;
             health.Died -= HandleDied;
         }
 
         RestoreSlamRootMotion();
     }
-    
+
+    private void OnDamaged(DamageInfo damageInfo)
+    {
+        if (health == null || health.CurrentHealth <= 0f)
+        {
+            return;
+        }
+
+        TryInterruptAttack(damageInfo);
+    }
+
+    private bool TryInterruptAttack(DamageInfo damageInfo)
+    {
+        if (damageInfo.InterruptPower <= 0 ||
+            damageInfo.InterruptPower < interruptResistance ||
+            Time.time < interruptImmunityEndTime ||
+            !IsAttackInterruptible())
+        {
+            return false;
+        }
+
+        InterruptCurrentAttack(damageInfo);
+        return true;
+    }
+
+    private bool IsAttackInterruptible()
+    {
+        return currentState switch
+        {
+            BossState.Attack => attackActive && !attackCommitted,
+            BossState.Charge => chargePhase == ChargePhase.Windup,
+            BossState.Slam => slamPhase == SlamPhase.Windup,
+            _ => false
+        };
+    }
+
+    private void InterruptCurrentAttack(DamageInfo damageInfo)
+    {
+        ResetAttackRuntime();
+        animator.ResetTrigger(attackHash);
+        animator.ResetTrigger(slamStateHash);
+        HideChargeWarning();
+        HideSlamWarning();
+        slamMoving = false;
+        RestoreSlamRootMotion();
+
+        if (bossAnimationController != null)
+        {
+            bossAnimationController.PlayHit();
+        }
+
+        currentState = BossState.Stunned;
+        stunEndTime = Time.time + stunDuration;
+        interruptImmunityEndTime = stunEndTime + interruptImmunityDuration;
+        nextAttackTime = Mathf.Max(nextAttackTime, stunEndTime);
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            agent.isStopped = true;
+            agent.ResetPath();
+        }
+
+        Debug.Log(
+            $"{name} attack interrupted: power={damageInfo.InterruptPower}, " +
+            $"resistance={interruptResistance}, stun={stunDuration:F2}s.",
+            this
+        );
+    }
+
     private void HandleDied()
     {
         currentState = BossState.Dead;
@@ -415,6 +499,23 @@ public class BossController : MonoBehaviour
             case BossState.Slam:
                 UpdateSlam();
                 break;
+
+            case BossState.Stunned:
+                UpdateStunned();
+                break;
+        }
+    }
+
+    private void UpdateStunned()
+    {
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            agent.isStopped = true;
+        }
+
+        if (Time.time >= stunEndTime)
+        {
+            EnterChaseState();
         }
     }
     

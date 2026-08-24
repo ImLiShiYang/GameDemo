@@ -11,7 +11,7 @@ public class BossAnimationController : MonoBehaviour
     private static readonly int DeadHash = Animator.StringToHash("Dead");
     private static readonly int ChargingHash = Animator.StringToHash("IsCharging");
     private static readonly int SlamHash = Animator.StringToHash("Slam");
-        
+    private static readonly int HitHash = Animator.StringToHash("Hit");
     
 
     private void Awake()
@@ -38,6 +38,11 @@ public class BossAnimationController : MonoBehaviour
         animator.SetFloat(SpeedHash, speed, 0.1f, Time.deltaTime);
     }
     
+    public void PlayHit()
+    {
+        animator.SetTrigger(HitHash);
+    }
+    
     public void SetCharging(bool value)
     {
         animator.SetBool(ChargingHash, value);
@@ -51,6 +56,7 @@ public class BossAnimationController : MonoBehaviour
     public void PlayDead()
     {
         animator.ResetTrigger(AttackHash);
+        animator.ResetTrigger(HitHash);
         animator.SetFloat(SpeedHash, 0f);
         animator.SetBool(DeadHash, true);
     }

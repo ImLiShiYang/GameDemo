@@ -30,6 +30,15 @@ public class SkillManager : MonoBehaviour
     private float piercingBeamEffectLifeTime = 0.2f;
     
     private const string SkillConfigModule ="Skill.SkillConfig";
+
+    private int SkillTargetMask
+    {
+        get
+        {
+            int bossLayer = LayerMask.NameToLayer("Boss");
+            return bossLayer < 0 ? enemyMask.value : enemyMask.value | (1 << bossLayer);
+        }
+    }
     
     private sealed class SkillRuntimeConfig
     {
@@ -96,7 +105,7 @@ public class SkillManager : MonoBehaviour
             Physics.OverlapSphere(
                 player.position,
                 range,
-                enemyMask,
+                SkillTargetMask,
                 QueryTriggerInteraction.Ignore
             );
 
@@ -336,7 +345,7 @@ public class SkillManager : MonoBehaviour
             origin,
             direction,
             range,
-            enemyMask,
+            SkillTargetMask,
             QueryTriggerInteraction.Ignore
         );
 
@@ -470,7 +479,7 @@ public class SkillManager : MonoBehaviour
             Physics.OverlapSphere(
                 player.position,
                 range,
-                enemyMask,
+                SkillTargetMask,
                 QueryTriggerInteraction.Ignore
             );
 
