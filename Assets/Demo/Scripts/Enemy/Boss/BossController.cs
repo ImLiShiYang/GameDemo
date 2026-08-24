@@ -149,6 +149,26 @@ public class BossController : MonoBehaviour
     [SerializeField, Min(0f)] private float meleeUtilityWeight = 0.9f;
     [SerializeField, Min(0f)] private float chargeUtilityWeight = 1f;
     [SerializeField, Min(0f)] private float slamUtilityWeight = 1.05f;
+
+    [Header("Skill Obstacle Detection")]
+    [Tooltip("技能路径检测使用的障碍层。默认检测 Default 和 Environment。")]
+    [SerializeField] private LayerMask skillObstacleMask =
+        (1 << 0) | (1 << 8);
+
+    [Tooltip("Charge 障碍检测半径相对 NavMeshAgent 半径的倍率。")]
+    [SerializeField, Range(0.1f, 1f)]
+    private float chargeObstacleRadiusScale = 0.9f;
+
+    [Tooltip("Charge 停在障碍物前保留的距离。")]
+    [SerializeField, Min(0f)] private float skillObstacleSkin = 0.1f;
+
+    [Tooltip("检测玩家附近 NavMesh 点时使用的半径。")]
+    [SerializeField, Min(0.1f)] private float skillPathSampleRadius = 1.5f;
+
+    [Tooltip("Slam 只在这个高度检测高墙，低矮障碍允许跳过。")]
+    [SerializeField, Min(0f)] private float slamWallCheckHeight = 1.2f;
+
+    [SerializeField, Min(0.01f)] private float slamWallCheckRadius = 0.25f;
     
 
     [Header("Animator")] 
@@ -168,6 +188,7 @@ public class BossController : MonoBehaviour
     private BossCombatAction lastSpecialAction;
     private float nextCombatDecisionTime;
     private float nextSpecialSkillTime;
+    private readonly RaycastHit[] skillObstacleHits = new RaycastHit[16];
 
     // 下一次允许进行普通攻击的时间。
     // 通过 Time.time >= nextAttackTime 判断普通攻击冷却是否结束。
@@ -886,6 +907,13 @@ public class BossController : MonoBehaviour
             return 0f;
         }
 
+        // 冲锋路线被墙体、场景碰撞体或 NavMesh 边界阻挡时，
+        // 该技能本轮不参与选择。
+        if(IsChargePathBlocked(player.position))
+        {
+            return 0f;
+        }
+
         // 根据玩家当前距离计算“距离适合度”。
         //
         // chargeMinDistance：
@@ -943,6 +971,14 @@ public class BossController : MonoBehaviour
             return 0f;
         }
 
+        // Slam 必须拥有合法 NavMesh 落点，并且起点到落点之间
+        // 不能被高墙阻挡。检测高度以下的低矮障碍允许跳过。
+        if(!TryGetSlamTargetPosition(out Vector3 candidateTarget) ||
+           IsSlamPathBlockedByWall(candidateTarget))
+        {
+            return 0f;
+        }
+
         float score = CalculateBandUtility(
             distanceToPlayer,
             slamMinDecisionDistance,
@@ -954,6 +990,230 @@ public class BossController : MonoBehaviour
             BossCombatAction.Slam,
             score
         );
+    }
+
+    /// <summary>
+    /// 检查 Boss 从当前位置冲锋到目标位置的路径是否被阻挡。
+    ///
+    /// 检测分为两层：
+    /// 1. NavMesh 检测：判断目标点是否可达，以及中间是否存在不可通行区域、断层或 Carve 障碍。
+    /// 2. Collider 检测：判断路径上是否存在没有反映到 NavMesh 中的实体墙体。
+    ///
+    /// 只要任意一种检测认为路径不可通过，就返回 true。
+    /// </summary>
+    /// <param name="targetPosition">本次冲锋准备前往的目标位置。</param>
+    /// <returns>true 表示冲锋路径被阻挡，false 表示路径可以冲锋。</returns>
+    private bool IsChargePathBlocked(Vector3 targetPosition)
+    {
+        // NavMeshAgent 不存在、被禁用，或者当前 Boss 不在 NavMesh 上，
+        // 都无法进行可靠的路径检测，因此直接认为路径不可用。
+        if(agent == null || !agent.enabled || !agent.isOnNavMesh)
+        {
+            return true;
+        }
+
+        // 计算 Boss 当前所在位置指向目标位置的方向。
+        Vector3 direction = targetPosition - transform.position;
+
+        // 冲锋只考虑 XZ 水平面，因此忽略 Y 轴高度差。
+        direction.y = 0f;
+
+        // 获取 Boss 到目标位置之间的水平距离。
+        float distance = direction.magnitude;
+
+        // 如果距离几乎为 0，说明没有有效的冲锋方向，
+        // 因此认为这条冲锋路径不可用。
+        if(distance <= 0.001f)
+        {
+            return true;
+        }
+
+        // 在目标位置附近寻找一个合法的 NavMesh 点。
+        //
+        // targetPosition：
+        // 原本准备冲向的位置。
+        //
+        // skillPathSampleRadius：
+        // 允许在目标点周围多大的范围内寻找 NavMesh。
+        //
+        // agent.areaMask：
+        // 只寻找 Boss 当前 NavMeshAgent 可以行走的区域。
+        //
+        // 如果找不到合法 NavMesh 点，说明目标位置本身不可到达。
+        if(!NavMesh.SamplePosition(targetPosition, out NavMeshHit sampledTarget, skillPathSampleRadius, agent.areaMask))
+        {
+            return true;
+        }
+
+        // 从 Boss 当前所在的 NavMesh 位置向目标 NavMesh 点进行射线检测。
+        //
+        // 如果 NavMesh.Raycast 返回 true，
+        // 说明这两个位置之间存在 NavMesh 边界、断层，
+        // 或者已经通过 NavMeshObstacle Carve 切出来的不可通行区域。
+        if(NavMesh.Raycast(agent.nextPosition, sampledTarget.position, out _, agent.areaMask))
+        {
+            return true;
+        }
+
+        // NavMesh 路径没有问题后，再使用胶囊体检测实体 Collider。
+        //
+        // direction / distance：
+        // 将方向向量归一化，得到冲锋方向。
+        //
+        // distance：
+        // 检测距离，也就是 Boss 到目标位置之间的距离。
+        //
+        // 这一层主要负责发现：
+        // 有 Collider，但没有正确反映到 NavMesh 上的墙体或其他障碍物。
+        //
+        // 找到障碍物返回 true，
+        // 没找到障碍物返回 false。
+        return TryGetNearestChargeObstacle(direction / distance, distance, out _);
+    }
+
+    private bool IsSlamPathBlockedByWall(Vector3 targetPosition)
+    {
+        Vector3 origin = transform.position + Vector3.up * slamWallCheckHeight;
+                         
+        Vector3 target = targetPosition;
+        target.y = origin.y;
+
+        Vector3 direction = target - origin;
+        float distance = direction.magnitude;
+
+        if(distance <= 0.001f)
+        {
+            return false;
+        }
+
+        int hitCount = Physics.SphereCastNonAlloc(
+            origin,
+            slamWallCheckRadius,
+            direction / distance,
+            skillObstacleHits,
+            distance,
+            skillObstacleMask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        return HasRelevantObstacleHit(hitCount, out _);
+    }
+
+    /// <summary>
+    /// 检测 Boss 沿指定方向冲锋时，前方是否存在障碍物。
+    /// 如果检测到多个障碍物，会返回距离 Boss 最近的障碍物距离。
+    /// </summary>
+    /// <param name="direction">冲锋方向，通常是已经归一化后的 chargeDirection。</param>
+    /// <param name="distance">本次向前检测的最大距离。</param>
+    /// <param name="nearestDistance">如果检测到障碍物，返回最近障碍物距离 Boss 的距离。</param>
+    /// <returns>检测到有效障碍物返回 true，否则返回 false。</returns>
+    private bool TryGetNearestChargeObstacle(Vector3 direction,float distance,out float nearestDistance)
+    {
+        // 根据 NavMeshAgent 的半径、高度等参数，
+        // 计算出一个大致包住 Boss 身体的胶囊体。
+        //
+        // bottom：胶囊体下端球心位置。
+        // top：胶囊体上端球心位置。
+        // radius：胶囊体半径。
+        //
+        // 后面不会只用一根射线检测，
+        // 而是让这个“Boss 身体大小的胶囊体”整体向前检测，
+        // 可以避免 Boss 身体边缘撞墙时，中心射线却没有检测到的问题。
+        GetChargeCapsule(out Vector3 bottom,out Vector3 top,out float radius);
+
+        // 从当前 Boss 所在位置开始，
+        // 让上面计算出的胶囊体沿 direction 方向向前扫描 distance 距离。
+        //
+        // 可以简单理解成：
+        //
+        //      Boss胶囊体
+        //        ╭──╮
+        //        │  │ ====================>
+        //        │  │       direction
+        //        ╰──╯
+        //
+        // 如果前方存在墙、柱子等 Collider，
+        // 就会被记录到 skillObstacleHits 数组中。
+        int hitCount = Physics.CapsuleCastNonAlloc(
+            bottom,
+            top,
+            radius,
+            direction,
+            skillObstacleHits,
+            distance,
+            skillObstacleMask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        // CapsuleCast 检测到的 Collider 里面，
+        // 可能包含 Boss 自己、Boss 的子物体、玩家等，
+        // 这些并不应该被当成真正的冲锋障碍物。
+        //
+        // HasRelevantObstacleHit 会进一步过滤这些无效结果，
+        // 并从剩余的真正障碍物中找到距离 Boss 最近的一个，
+        // 将距离写入 nearestDistance。
+        return HasRelevantObstacleHit(hitCount, out nearestDistance);
+    }
+
+    private bool HasRelevantObstacleHit(
+        int hitCount,
+        out float nearestDistance)
+    {
+        nearestDistance = float.PositiveInfinity;
+        bool foundObstacle = false;
+
+        for(int i = 0; i < hitCount; i++)
+        {
+            Collider hitCollider = skillObstacleHits[i].collider;
+            if(hitCollider == null)
+            {
+                continue;
+            }
+
+            Transform hitTransform = hitCollider.transform;
+            bool belongsToBoss =
+                hitTransform == transform ||
+                hitTransform.IsChildOf(transform);
+            bool belongsToPlayer =
+                player != null &&
+                (hitTransform == player ||
+                 hitTransform.IsChildOf(player));
+
+            if(belongsToBoss || belongsToPlayer)
+            {
+                continue;
+            }
+
+            foundObstacle = true;
+            nearestDistance = Mathf.Min(
+                nearestDistance,
+                skillObstacleHits[i].distance
+            );
+        }
+
+        return foundObstacle;
+    }
+
+    private void GetChargeCapsule(
+        out Vector3 bottom,
+        out Vector3 top,
+        out float radius)
+    {
+        radius = Mathf.Max(
+            0.05f,
+            agent.radius * chargeObstacleRadiusScale
+        );
+
+        float height = Mathf.Max(agent.height, radius * 2f);
+        Vector3 center = transform.position + Vector3.up *
+            (agent.baseOffset + height * 0.5f);
+        float halfSegment = Mathf.Max(
+            0f,
+            height * 0.5f - radius
+        );
+
+        bottom = center - Vector3.up * halfSegment;
+        top = center + Vector3.up * halfSegment;
     }
 
     /// <summary>
@@ -1049,12 +1309,18 @@ public class BossController : MonoBehaviour
     
     private void EnterSlamState()
     {
+        // 选择和真正进入技能之间场景可能已经变化，因此在提交技能前复查。
+        if(!TryGetSlamTargetPosition(out slamTargetPosition) ||
+           IsSlamPathBlockedByWall(slamTargetPosition))
+        {
+            EnterChaseState();
+            return;
+        }
+
         currentState = BossState.Slam;
 
         agent.isStopped = true;
         agent.ResetPath();
-
-        slamTargetPosition = GetSlamTargetPosition();
         
         ShowSlamWarning();
 
@@ -1137,36 +1403,28 @@ public class BossController : MonoBehaviour
     }
 
     /// <summary>
-    /// 获取本次 Slam 攻击锁定的落点。
-    /// 优先使用玩家当前所在位置，并在玩家附近寻找一个合法的 NavMesh 位置。
-    /// 如果找不到合适的 NavMesh 点，则使用玩家当前的水平位置作为备用落点。
+    /// 尝试获取本次 Slam 的合法 NavMesh 落点。
+    /// 找不到落点时不再使用玩家坐标强行跳跃，避免穿墙或落到 NavMesh 外。
     /// </summary>
-    /// <returns>本次 Slam 攻击最终锁定的世界坐标。</returns>
-    private Vector3 GetSlamTargetPosition()
+    private bool TryGetSlamTargetPosition(out Vector3 targetPosition)
     {
-        // 先记录进入 Slam 时玩家当前的位置。
-        // 这个位置只在 Slam 开始时获取一次，之后玩家移动不会再修改本次 Slam 的落点。
         Vector3 requestedPosition = player.position;
 
-        // 尝试在玩家当前位置附近寻找一个合法的 NavMesh 点。
-        // slamTargetSampleRadius 表示搜索半径，
-        // agent.areaMask 表示只搜索当前 Boss 的 NavMeshAgent 可以行走的区域。
-        if(agent != null && agent.enabled && NavMesh.SamplePosition(requestedPosition,out NavMeshHit hit,slamTargetSampleRadius,agent.areaMask))
+        if(agent != null &&
+           agent.enabled &&
+           NavMesh.SamplePosition(
+               requestedPosition,
+               out NavMeshHit hit,
+               slamTargetSampleRadius,
+               agent.areaMask))
         {
-            // 找到了合法的 NavMesh 位置，
-            // 将这个位置作为本次 Slam 最终锁定的落点。
-            return hit.position;
+            targetPosition = hit.position;
+            return true;
         }
 
-        // 如果玩家附近没有找到合法的 NavMesh 点，
-        // 就继续使用玩家当前的 X、Z 坐标。
-        //
-        // Y 坐标改成 Boss 当前高度，
-        // 避免玩家和 Boss 存在高度差时影响后续只在水平面进行的 Slam 移动。
         requestedPosition.y = transform.position.y;
-
-        // 返回备用落点。
-        return requestedPosition;
+        targetPosition = requestedPosition;
+        return false;
     }
 
     private void MoveSlamToLockedTarget()
@@ -1244,6 +1502,13 @@ public class BossController : MonoBehaviour
         // Boss 和玩家位置几乎重合时无法得到有效方向，
         // 取消本次冲锋，重新回到 Chase。
         if (direction.sqrMagnitude < 0.001f)
+        {
+            EnterChaseState();
+            return;
+        }
+
+        // 蓄力前再次确认路线，避免评分后障碍状态变化。
+        if(IsChargePathBlocked(player.position))
         {
             EnterChaseState();
             return;
@@ -1329,36 +1594,132 @@ public class BossController : MonoBehaviour
         chargePhase = ChargePhase.Moving;
     }
     
+    /// <summary>
+    /// 更新 Boss 冲锋移动阶段。
+    ///
+    /// 每一帧主要做四件事：
+    /// 1. 计算这一帧理论上应该移动的距离。
+    /// 2. 检查前方是否存在 Collider 或 NavMesh 障碍。
+    /// 3. 按允许的最大距离移动 Boss。
+    /// 4. 扣除实际移动距离，并判断冲锋是否结束。
+    /// </summary>
     private void UpdateChargeMoving()
     {
-        // 计算这一帧 Boss 应该移动多少距离。
-        // 例如 chargeSpeed = 12，60 FPS 时，
-        // 每帧大约移动 12 / 60 = 0.2 米。
-        float moveDistance = chargeSpeed * Time.deltaTime;
+        // 如果 Boss 已经不在 NavMesh 上，
+        // 就无法继续通过 NavMeshAgent 正常冲锋，
+        // 直接结束冲锋并进入恢复阶段。
+        if(!agent.isOnNavMesh)
+        {
+            BeginChargeRecover();
+            return;
+        }
 
-        // 沿之前锁定好的 chargeDirection 移动。
-        // 这里没有重新读取 player.position，
-        // 因此 Boss 冲锋过程中不会跟踪玩家转弯。
-        agent.Move(chargeDirection * moveDistance);
-        
-        // 冲锋移动过程中检查是否撞到玩家。
+        // 计算这一帧理论上应该移动的距离。
+        //
+        // chargeSpeed * Time.deltaTime：
+        // 按当前冲锋速度计算这一帧应该前进多少米。
+        //
+        // chargeRemainingDistance：
+        // 当前整个冲锋还剩多少距离。
+        //
+        // 取两者较小值，防止最后一帧冲过终点。
+        float requestedDistance = Mathf.Min(chargeSpeed * Time.deltaTime, chargeRemainingDistance);
+
+        // 在真正移动之前先用胶囊体检测前方是否存在 Collider 障碍。
+        //
+        // 多检测一个 skillObstacleSkin，
+        // 是为了提前发现墙体，并让 Boss 最终停在墙前留出一点安全距离。
+        //
+        // blocked：
+        // true 表示前方存在障碍物。
+        //
+        // obstacleDistance：
+        // Boss 到最近障碍物之间的距离。
+        bool blocked = TryGetNearestChargeObstacle(chargeDirection, requestedDistance + skillObstacleSkin, out float obstacleDistance);
+
+        // 根据是否检测到障碍，计算这一帧真正允许移动的距离。
+        //
+        // 没有障碍：
+        // 直接移动 requestedDistance。
+        //
+        // 有障碍：
+        // 最多移动到障碍物前面，并额外保留 skillObstacleSkin 的距离。
+        //
+        // Mathf.Max(0f, ...) 防止结果变成负数。
+        float allowedDistance = blocked ? Mathf.Max(0f, obstacleDistance - skillObstacleSkin) : requestedDistance;
+
+        // 记录 Boss 当前在 NavMesh 上的位置。
+        Vector3 navMeshStart = agent.nextPosition;
+
+        // 根据冲锋方向和允许移动距离，
+        // 计算这一帧理论上的终点。
+        Vector3 requestedEnd = navMeshStart + chargeDirection * allowedDistance;
+
+        // Collider 检测通过以后，再检查 NavMesh。
+        //
+        // NavMesh.Raycast 返回 true，
+        // 说明 Boss 到 requestedEnd 之间遇到了 NavMesh 边界、
+        // 不可通行区域、断层或被 Carve 的障碍。
+        if(NavMesh.Raycast(navMeshStart, requestedEnd, out NavMeshHit navMeshHit, agent.areaMask))
+        {
+            // navMeshHit.position 是射线碰到 NavMesh 边界的位置。
+            //
+            // Boss 最多移动到这个位置之前，
+            // 同样保留 skillObstacleSkin 的安全距离。
+            allowedDistance = Mathf.Max(0f, GetFlatDistance(navMeshStart, navMeshHit.position) - skillObstacleSkin);
+
+            // 标记这一帧已经碰到障碍，
+            // 后面移动完成以后结束冲锋。
+            blocked = true;
+        }
+
+        // 保存移动前的位置。
+        //
+        // 后面不用 allowedDistance 直接扣除剩余距离，
+        // 而是根据移动前后的位置计算 Boss 实际移动了多少。
+        Vector3 positionBeforeMove = agent.nextPosition;
+
+        // 只有确实还有可移动距离时才执行移动。
+        if(allowedDistance > 0f)
+        {
+            agent.Move(chargeDirection * allowedDistance);
+        }
+
+        // 计算 Boss 这一帧真正移动的距离。
+        //
+        // 使用实际移动距离而不是 requestedDistance，
+        // 可以避免撞墙以后仍然错误地扣除整帧冲锋距离。
+        float actualMoveDistance = GetFlatDistance(positionBeforeMove, agent.nextPosition);
+
+        // Boss 移动完成以后检查是否撞到了玩家，
+        // 如果进入命中范围则造成一次冲锋伤害。
         TryDealChargeDamage();
 
-        // 从剩余冲锋距离中扣掉这一帧已经移动的距离。
-        chargeRemainingDistance -= moveDistance;
+        // 从剩余冲锋距离中扣除这一帧真正移动的距离。
+        chargeRemainingDistance -= actualMoveDistance;
 
-        // 还有剩余距离就继续冲锋。
-        if (chargeRemainingDistance > 0f)
+        // 如果这一帧没有撞到障碍，
+        // 并且冲锋距离还没有跑完，
+        // 就保持 Moving 状态，下一帧继续执行。
+        if(!blocked && chargeRemainingDistance > 0.01f)
         {
             return;
         }
 
-        // 冲锋距离已经跑完，进入恢复/硬直阶段。
-        chargePhase = ChargePhase.Recover;
+        // 出现以下任意情况时结束冲锋：
+        // 1. 前方碰到了 Collider 障碍。
+        // 2. 前方碰到了 NavMesh 边界。
+        // 3. chargeRemainingDistance 已经耗尽。
+        //
+        // 然后进入冲锋后的恢复/硬直阶段。
+        BeginChargeRecover();
+    }
 
-        // 记录恢复阶段结束时间。
+    private void BeginChargeRecover()
+    {
+        chargeRemainingDistance = 0f;
+        chargePhase = ChargePhase.Recover;
         chargePhaseEndTime = Time.time + chargeRecoverDuration;
-        
         HideChargeWarning();
     }
     
