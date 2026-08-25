@@ -17,6 +17,9 @@ public class PausePanel : UIBase
     [SerializeField]
     private Button quitButton;
     
+    [SerializeField]
+    private Button tutorialButton;
+    
 
     private float previousTimeScale = 1f;
 
@@ -39,6 +42,11 @@ public class PausePanel : UIBase
         {
             mainMenuButton.onClick.AddListener(BackToMainMenu);
         }
+        
+        if (tutorialButton != null)
+        {
+            tutorialButton.onClick.AddListener(OpenTutorial);
+        }
 
         if (quitButton != null)
         {
@@ -46,6 +54,32 @@ public class PausePanel : UIBase
         }
     }
 
+    private void OpenTutorial()
+    {
+        if (GameEntry.Instance == null)
+        {
+            return;
+        }
+
+        UIManager uiManager = GameEntry.UI;
+
+        if (uiManager == null || !uiManager.HasConfig(UIType.Tutorial))
+        {
+            return;
+        }
+
+        CloseSelf();
+
+        uiManager.Open(
+            UIType.Tutorial,
+            new TutorialOpenArgs
+            {
+                MarkAsShown = false,
+                OnConfirmed = () => uiManager.Open(UIType.Pause)
+            }
+        );
+    }
+    
     protected override void OnOpen(object args)
     {
         previousTimeScale = Time.timeScale;
@@ -66,14 +100,22 @@ public class PausePanel : UIBase
 
     protected override void OnClose()
     {
-        Time.timeScale =
-            previousTimeScale;
+        // 恢复暂停前的游戏时间。
+        Time.timeScale = previousTimeScale;
 
-        Cursor.lockState =
-            previousCursorLockMode;
+        // 忽略暂停菜单中最后一次鼠标位置，
+        // 等玩家重新移动鼠标后再更新准心。
+        GrayboxPlayerController player =
+            FindObjectOfType<GrayboxPlayerController>();
 
-        Cursor.visible =
-            previousCursorVisible;
+        if (player != null)
+        {
+            player.WaitForAimMouseMovement();
+        }
+
+        // 离开暂停界面后恢复游戏鼠标状态。
+        Cursor.lockState = CursorLockMode.Confined;
+        Cursor.visible = false;
     }
 
     private void Resume()
@@ -109,7 +151,9 @@ public class PausePanel : UIBase
 
     private void QuitGame()
     {
-        Time.timeScale = 1f;
+        // 退出前只恢复系统鼠标，不恢复游戏运行。
+        Cursor.visible = true;
+        Cursor.lockState = CursorLockMode.None;
 
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.isPlaying = false;

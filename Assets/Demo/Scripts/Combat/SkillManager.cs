@@ -44,6 +44,7 @@ public class SkillManager : MonoBehaviour
     {
         public string Id;
         public string DisplayName;
+        public string Description;
         public string Executor;
 
         public float Damage;
@@ -230,7 +231,7 @@ public class SkillManager : MonoBehaviour
             );
 
         if (results == null ||
-            results.Length < 8 ||
+            results.Length < 9 ||
             results[0] == null)
         {
             Debug.LogError(
@@ -250,6 +251,9 @@ public class SkillManager : MonoBehaviour
 
                 DisplayName =
                     Convert.ToString(results[1]),
+                
+                Description =
+                    Convert.ToString(results[8]),
 
                 Executor =
                     Convert.ToString(results[2]),
@@ -563,6 +567,18 @@ public class SkillManager : MonoBehaviour
         );
     }
 
+    public string GetSkillDescription(string skillId)
+    {
+        if (TryGetSkillConfig(
+                skillId,
+                out SkillRuntimeConfig config))
+        {
+            return config.Description;
+        }
+
+        return string.Empty;
+    }
+    
     /// <summary>
     /// 判断技能当前是否可以释放。
     /// </summary>

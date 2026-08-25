@@ -17,8 +17,9 @@ function SkillBase.New(config)
     )
 
     -- 公共字段默认值
-    config.displayName =
-        config.displayName or config.id
+    config.displayName = config.displayName or config.id        
+        
+    config.description =tostring(config.description or "")        
 
     config.damage =
         math.max(0, tonumber(config.damage) or 0)

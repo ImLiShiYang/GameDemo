@@ -34,6 +34,33 @@ public class GameEntry : MonoBehaviour
     [SerializeField]
     private BuffManager buffManager;
     
+    [SerializeField]
+    private SaveManager saveManager;
+    
+    public static SaveManager Save
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError("场景中没有 GameEntry。");
+                return null;
+            }
+
+            if (Instance.saveManager == null)
+            {
+                Debug.LogError(
+                    "GameEntry 没有找到 SaveManager。",
+                    Instance
+                );
+
+                return null;
+            }
+
+            return Instance.saveManager;
+        }
+    }
+    
     public static BuffManager Buff
     {
         get
@@ -175,6 +202,15 @@ public class GameEntry : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        Debug.Log(GameEntry.Save.Data.player.highestScore);
+
+        GameEntry.Save.Data.player.highestScore = 999;
+
+        GameEntry.Save.Save();
+    }
+    
     /// <summary>
     /// 全局 UI 管理器入口。
     /// </summary>
@@ -256,6 +292,24 @@ public class GameEntry : MonoBehaviour
                 GetComponentInChildren<LuaManager>(
                     true
                 );
+        }
+        
+        if (saveManager == null)
+        {
+            saveManager = GetComponentInChildren<SaveManager>(true);
+        }
+        
+        if (saveManager == null)
+        {
+            saveManager = gameObject.AddComponent<SaveManager>();
+        }
+        
+        if (saveManager == null)
+        {
+            Debug.LogError(
+                "GameEntry 没有成功创建 SaveManager。",
+                this
+            );
         }
 
         if (luaManager == null)

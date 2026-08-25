@@ -83,11 +83,7 @@ public class GameUIBootstrap : MonoBehaviour
         {
             StartGameplay();
         }
-
-        if (openTutorialOnStart && !TutorialPanel.HasBeenShown && uiManager.HasConfig(UIType.Tutorial))
-        {
-            uiManager.Open(UIType.Tutorial);
-        }
+        
     }
 
     private void HandleGameStarted()
@@ -104,10 +100,32 @@ public class GameUIBootstrap : MonoBehaviour
             return;
         }
 
-        // 1. 打开游戏 HUD
         OpenHUD(uiManager);
 
-        // 2. 正式开始波次
+        bool shouldOpenTutorial =
+            openTutorialOnStart &&
+            !TutorialPanel.HasBeenShown &&
+            uiManager.HasConfig(UIType.Tutorial);
+
+        if (shouldOpenTutorial)
+        {
+            uiManager.Open(
+                UIType.Tutorial,
+                new TutorialOpenArgs
+                {
+                    MarkAsShown = true,
+                    OnConfirmed = StartWaves
+                }
+            );
+
+            return;
+        }
+
+        StartWaves();
+    }
+    
+    private void StartWaves()
+    {
         WaveManager waveManager = GameEntry.Wave;
 
         if (waveManager != null)

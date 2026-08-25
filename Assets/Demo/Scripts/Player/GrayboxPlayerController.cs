@@ -127,6 +127,15 @@ public class GrayboxPlayerController : MonoBehaviour
     private Vector3 weaponSocketDefaultLocalPosition;
     private Quaternion weaponSocketDefaultLocalRotation;
     private Vector3 weaponSocketDefaultLocalScale;
+    
+    private bool waitForAimMouseMovement;
+    private Vector3 aimResumeMousePosition;
+    
+    public void WaitForAimMouseMovement()
+    {
+        aimResumeMousePosition = Input.mousePosition;
+        waitForAimMouseMovement = true;
+    }
 
     public void SetMoveSpeedMultiplier(float multiplier)
     {
@@ -836,6 +845,33 @@ public class GrayboxPlayerController : MonoBehaviour
     /// </summary>
     private bool TryGetMouseHorizontalDirection(out Vector3 direction)
     {
+        
+        // 如果当前正在等待玩家主动移动鼠标，
+        // 就暂时不使用点击 UI 按钮时留下的鼠标位置进行瞄准。
+        if (waitForAimMouseMovement)
+        {
+            // 计算鼠标当前位置与关闭 UI 时记录位置之间的偏移量。
+            Vector3 mouseOffset = Input.mousePosition - aimResumeMousePosition;
+
+            // sqrMagnitude 是偏移距离的平方。
+            // 小于 4 表示鼠标移动距离不足 2 像素，
+            // 这种情况视为鼠标仍停留在按钮附近。
+            if (mouseOffset.sqrMagnitude < 4f)
+            {
+                // 鼠标仍停在 UI 按钮位置时，不读取按钮位置，
+                // 继续使用暂停前最后一次有效的瞄准方向。
+                direction = hasLastAimDirection
+                    ? lastAimDirection
+                    : transform.forward;
+
+                return true;
+            }
+
+            // 鼠标已经由玩家主动移动，
+            // 解除等待状态，从本帧开始恢复正常鼠标瞄准。
+            waitForAimMouseMovement = false;
+        }
+        
         // 默认先返回一个零向量。
         // 只有后续成功得到有效瞄准方向时，才会真正写入 direction。
         direction = Vector3.zero;
