@@ -201,15 +201,7 @@ public class GameEntry : MonoBehaviour
             return Instance.poolManager;
         }
     }
-
-    private void Start()
-    {
-        Debug.Log(GameEntry.Save.Data.player.highestScore);
-
-        GameEntry.Save.Data.player.highestScore = 999;
-
-        GameEntry.Save.Save();
-    }
+    
     
     /// <summary>
     /// 全局 UI 管理器入口。

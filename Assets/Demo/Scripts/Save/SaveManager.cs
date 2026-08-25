@@ -18,6 +18,7 @@ public class SaveManager : MonoBehaviour
     // 存档文件完整路径。
     private string savePath;
 
+    private bool canWriteSave = true;
 
     // 当前加载后的存档数据。
     public SaveData Data
@@ -43,46 +44,159 @@ public class SaveManager : MonoBehaviour
     /// </summary>
     public void Load()
     {
-        if(!File.Exists(savePath))
+        // 每次重新加载前，先恢复默认的可写状态。
+        // 如果后面发现是未来版本，再切换成只读。
+        canWriteSave = true;
+
+        if (!File.Exists(savePath))
         {
             CreateNewSave();
             return;
         }
 
-
         try
         {
-            // 读取 JSON 字符串。
             string json = File.ReadAllText(savePath);
 
-            // 先创建默认数据。
-            // 这样旧存档缺少新字段时，可以保留默认值。
+            // 先创建带有默认值的数据对象。
             Data = new SaveData();
 
-            // 使用覆盖方式读取数据。
-            // JSON 中存在的字段会覆盖默认值，
-            // 不存在的字段保持默认值。
+            // JSON中缺少的字段继续使用默认值。
             JsonUtility.FromJsonOverwrite(json, Data);
 
-            CheckVersion();
-        }
-        catch
-        {
-            // 存档损坏时重新创建。
-            Debug.LogError("读取存档失败，重新创建存档。");
+            // 检查版本并执行迁移。
+            bool versionIsSupported =
+                TryMigrateToCurrentVersion(
+                    out bool versionWasMigrated
+                );
 
+            // 未来版本存档进入只读状态。
+            // 必须在后面可能调用Save之前赋值。
+            canWriteSave = versionIsSupported;
+
+            // 补齐对象并修复非法数据。
+            bool dataWasRepaired =
+                ValidateAndRepair();
+
+            // 只有支持当前版本时才能写回修复结果。
+            if (versionIsSupported &&
+                (versionWasMigrated || dataWasRepaired))
+            {
+                Save();
+            }
+        }
+        catch (System.Exception exception)
+        {
+            Debug.LogError(
+                $"读取存档失败，将创建默认存档。\n" +
+                $"存档路径：{savePath}\n" +
+                $"异常信息：{exception}",
+                this
+            );
+
+            // 损坏存档会被默认存档替换，因此恢复可写。
+            canWriteSave = true;
             CreateNewSave();
         }
     }
 
+    /// <summary>
+    /// 补齐可能为空的数据对象，并修复越界数值。
+    /// 返回 true 表示数据被修改过，需要重新保存。
+    /// </summary>
+    private bool ValidateAndRepair()
+    {
+        bool repaired = false;
 
+        // 防止旧存档中 player 字段缺失或被写成 null。
+        if(Data.player == null)
+        {
+            Data.player = new PlayerSaveData();
+            repaired = true;
+        }
+
+        // 防止旧存档中 settings 字段缺失或被写成 null。
+        if(Data.settings == null)
+        {
+            Data.settings = new SettingsSaveData();
+            repaired = true;
+        }
+
+        // 最高分不能小于 0。
+        int validHighestScore = Mathf.Max(
+            0,
+            Data.player.highestScore
+        );
+
+        if(Data.player.highestScore != validHighestScore)
+        {
+            Data.player.highestScore = validHighestScore;
+            repaired = true;
+        }
+
+        // 三类音量都限制在 0～1。
+        repaired |= RepairVolume(
+            ref Data.settings.masterVolume
+        );
+
+        repaired |= RepairVolume(
+            ref Data.settings.musicVolume
+        );
+
+        repaired |= RepairVolume(
+            ref Data.settings.sfxVolume
+        );
+
+        // 获取当前项目允许使用的最高画质索引。
+        int highestQualityLevel = Mathf.Max(
+            0,
+            QualitySettings.names.Length - 1
+        );
+
+        int validQualityLevel = Mathf.Clamp(
+            Data.settings.qualityLevel,
+            0,
+            highestQualityLevel
+        );
+
+        if(Data.settings.qualityLevel != validQualityLevel)
+        {
+            Data.settings.qualityLevel = validQualityLevel;
+            repaired = true;
+        }
+
+        return repaired;
+    }
+
+    /// <summary>
+    /// 将音量限制在 0～1。
+    /// NaN 和无穷值恢复成默认音量 1。
+    /// </summary>
+    private static bool RepairVolume(ref float volume)
+    {
+        float validVolume =
+            float.IsNaN(volume) ||
+            float.IsInfinity(volume)
+                ? 1f
+                : Mathf.Clamp01(volume);
+
+        // 数值没有变化，不需要重新保存。
+        if(Mathf.Approximately(volume, validVolume))
+        {
+            return false;
+        }
+
+        volume = validVolume;
+        return true;
+    }
+    
     /// <summary>
     /// 创建新的默认存档。
     /// </summary>
     private void CreateNewSave()
     {
+        canWriteSave = true;
         Data = new SaveData();
-
         Save();
     }
 
@@ -92,6 +206,12 @@ public class SaveManager : MonoBehaviour
     /// </summary>
     public void Save()
     {
+        if (!canWriteSave)
+        {
+            Debug.LogWarning("当前存档版本高于客户端版本，已阻止保存。", this);
+            return;
+        }
+        
         if(Data == null)
         {
             return;
@@ -109,27 +229,71 @@ public class SaveManager : MonoBehaviour
 
 
     /// <summary>
-    /// 检查存档版本。
+    /// 将旧存档逐版本迁移到当前版本。
+    /// 返回 false 表示存档来自更高版本的客户端，
+    /// 当前客户端只能读取，不能覆盖保存。
     /// </summary>
-    private void CheckVersion()
+    private bool TryMigrateToCurrentVersion(out bool versionWasMigrated)
     {
-        if(Data.version < CurrentVersion)
+        versionWasMigrated = false;
+
+        // 存档版本比当前客户端更新。
+        // 继续保存会造成版本降级和字段丢失，因此禁止写回。
+        if(Data.version > CurrentVersion)
         {
-            Migrate(Data.version, CurrentVersion);
+            Debug.LogWarning(
+                $"存档版本高于当前客户端版本，" +
+                $"将跳过存档写回。" +
+                $"存档版本：{Data.version}，" +
+                $"客户端版本：{CurrentVersion}",
+                this
+            );
+
+            return false;
         }
+
+        // 必须逐版本迁移，不能直接把版本号改成最新值。
+        while(Data.version < CurrentVersion)
+        {
+            switch(Data.version)
+            {
+                case 0:
+                    MigrateVersion0To1();
+                    Data.version = 1;
+                    versionWasMigrated = true;
+                    break;
+
+                default:
+                    throw new InvalidDataException(
+                        $"没有找到存档版本 {Data.version} " +
+                        $"到版本 {Data.version + 1} 的迁移方法。"
+                    );
+            }
+        }
+
+        return true;
     }
-
-
+    
     /// <summary>
-    /// 存档版本迁移。
-    /// 当存档结构发生变化时，在这里处理旧版本数据。
+    /// version 0 代表还没有 version 字段的早期存档。
+    /// version 1 正式加入 player 和 settings 数据结构。
     /// </summary>
-    private void Migrate(int oldVersion, int newVersion)
+    private void MigrateVersion0To1()
     {
-        Debug.Log($"存档迁移 {oldVersion} -> {newVersion}");
+        if(Data.player == null)
+        {
+            Data.player = new PlayerSaveData();
+        }
 
-        Data.version = newVersion;
+        if(Data.settings == null)
+        {
+            Data.settings = new SettingsSaveData();
+        }
 
-        Save();
+        Debug.Log(
+            "存档已经从 version 0 迁移到 version 1。",
+            this
+        );
     }
+
 }

@@ -6,6 +6,7 @@ public enum UIType
     Result,
     LevelUp,
     Tutorial,
+    Settings,
     MobileControls
 }
 

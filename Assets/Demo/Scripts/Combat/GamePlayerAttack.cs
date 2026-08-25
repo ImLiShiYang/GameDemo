@@ -291,9 +291,7 @@ public class GamePlayerAttack : MonoBehaviour
 
     private void InitializeShotAudio()
     {
-        GameObject audioHost = muzzle != null
-            ? muzzle.gameObject
-            : gameObject;
+        GameObject audioHost = muzzle != null ? muzzle.gameObject : gameObject;
 
         shotAudioSource = audioHost.GetComponent<AudioSource>();
 
@@ -305,6 +303,13 @@ public class GamePlayerAttack : MonoBehaviour
         shotAudioSource.playOnAwake = false;
         shotAudioSource.spatialBlend = 0.35f;
         shotAudioSource.dopplerLevel = 0f;
+
+        // 将射击声音输出到 AudioMixer 的 SFX 分组。
+        // 之后修改 SFXVolume 或打开 SFX 静音，就能控制射击声音。
+        if (GameAudioManager.Instance != null)
+        {
+            shotAudioSource.outputAudioMixerGroup = GameAudioManager.Instance.SfxMixerGroup;
+        }
     }
 
     private void CreateFallbackMuzzleFlash()

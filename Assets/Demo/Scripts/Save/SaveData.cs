@@ -4,7 +4,7 @@ using System;
 [Serializable]
 public class SaveData
 {
-    public int version = 1;
+    public int version = 0;
 
     public PlayerSaveData player = new PlayerSaveData();
 

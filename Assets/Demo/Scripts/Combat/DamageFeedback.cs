@@ -161,10 +161,7 @@ public class DamageFeedback : MonoBehaviour
 
     private void PrepareHitAudioSource()
     {
-        if (hitAudioSource == null)
-        {
-            hitAudioSource = GetComponent<AudioSource>();
-        }
+        hitAudioSource = GetComponent<AudioSource>();
 
         if (hitAudioSource == null)
         {
@@ -177,6 +174,12 @@ public class DamageFeedback : MonoBehaviour
         hitAudioSource.minDistance = hitSoundMinDistance;
         hitAudioSource.maxDistance = hitSoundMaxDistance;
         hitAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+
+        // 将受击声音输出到 AudioMixer 的 SFX 分组。
+        if (GameAudioManager.Instance != null)
+        {
+            hitAudioSource.outputAudioMixerGroup =GameAudioManager.Instance.SfxMixerGroup;
+        }
     }
 
     private void CacheFlashTargets()

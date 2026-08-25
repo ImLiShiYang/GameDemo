@@ -27,6 +27,14 @@ public class UIInputController : MonoBehaviour
             return;
         }
 
+        // 设置页面打开时，Esc只关闭设置页面。
+        // SettingsPanel关闭后会通过OnClosed重新显示暂停窗口。
+        if (uiManager.IsOpen(UIType.Settings))
+        {
+            uiManager.Close(UIType.Settings);
+            return;
+        }
+        
         // 升级选择和结算时不允许再打开 Pause。
         if (uiManager.IsOpen(UIType.MainMenu) ||
             uiManager.IsOpen(UIType.LevelUp) ||

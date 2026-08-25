@@ -20,7 +20,12 @@ public class PausePanel : UIBase
     [SerializeField]
     private Button tutorialButton;
     
-
+    [SerializeField] 
+    private Button settingsButton;
+    
+    [SerializeField] 
+    private GameObject windowRoot;
+    
     private float previousTimeScale = 1f;
 
     private CursorLockMode previousCursorLockMode;
@@ -43,6 +48,11 @@ public class PausePanel : UIBase
             mainMenuButton.onClick.AddListener(BackToMainMenu);
         }
         
+        if (settingsButton != null)
+        {
+            settingsButton.onClick.AddListener(OpenSettings);
+        }
+        
         if (tutorialButton != null)
         {
             tutorialButton.onClick.AddListener(OpenTutorial);
@@ -54,6 +64,44 @@ public class PausePanel : UIBase
         }
     }
 
+    private void OpenSettings()
+    {
+        if (GameEntry.Instance == null)
+        {
+            return;
+        }
+
+        UIManager uiManager = GameEntry.UI;
+
+        if (uiManager == null || !uiManager.HasConfig(UIType.Settings))
+        {
+            return;
+        }
+
+        // 只隐藏暂停页面的窗口，不关闭 PausePanel。
+        // 因此游戏时间和音乐仍然保持暂停。
+        if (windowRoot != null)
+        {
+            windowRoot.SetActive(false);
+        }
+
+        uiManager.Open(
+            UIType.Settings,
+            new SettingsOpenArgs
+            {
+                OnClosed = ShowPauseWindow
+            }
+        );
+    }
+
+    private void ShowPauseWindow()
+    {
+        if (windowRoot != null)
+        {
+            windowRoot.SetActive(true);
+        }
+    }
+    
     private void OpenTutorial()
     {
         if (GameEntry.Instance == null)
@@ -96,6 +144,13 @@ public class PausePanel : UIBase
             CursorLockMode.None;
 
         Cursor.visible = true;
+        
+        if (windowRoot != null)
+        {
+            windowRoot.SetActive(true);
+        }
+
+        GameAudioManager.Instance?.PauseMusic();
     }
 
     protected override void OnClose()
@@ -116,6 +171,8 @@ public class PausePanel : UIBase
         // 离开暂停界面后恢复游戏鼠标状态。
         Cursor.lockState = CursorLockMode.Confined;
         Cursor.visible = false;
+        
+        GameAudioManager.Instance?.ResumeMusic();
     }
 
     private void Resume()
