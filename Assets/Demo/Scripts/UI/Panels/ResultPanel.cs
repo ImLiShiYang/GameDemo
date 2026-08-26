@@ -10,6 +10,10 @@ public class ResultOpenArgs
     public string Title;
 
     public string Detail;
+
+    public ScoreResult Score;
+
+    public int HighestScore;
 }
 
 public class ResultPanel : UIBase
@@ -77,8 +81,7 @@ public class ResultPanel : UIBase
             previousTimeScale;
     }
 
-    private void RefreshContent(
-        object args)
+    private void RefreshContent(object args)
     {
         ResultOpenArgs result =
             args as ResultOpenArgs;
@@ -119,9 +122,38 @@ public class ResultPanel : UIBase
 
         if (detailText != null)
         {
-            detailText.text =
-                result.Detail ?? string.Empty;
+            detailText.text = BuildDetail(result);
         }
+    }
+
+    private static string BuildDetail(ResultOpenArgs result)
+    {
+        string detail = result.Detail ?? string.Empty;
+
+        if (!result.Victory || result.Score == null)
+        {
+            return $"{detail}\n\n历史最高分：{result.HighestScore}";
+        }
+
+        ScoreResult score = result.Score;
+        string newRecordText = score.IsNewHighestScore ? "\n新纪录！" : string.Empty;
+
+        return
+            $"{detail}\n\n" +
+            $"通关基础分：{score.ClearBaseScore}\n" +
+            $"时间奖励：{score.TimeBonus}（用时 {FormatTime(score.ClearTime)}）\n" +
+            $"生命奖励：{score.HealthBonus}（剩余 {Mathf.RoundToInt(score.RemainingHealthRatio * 100f)}%）\n" +
+            $"最终得分：{score.FinalScore}\n" +
+            $"历史最高分：{score.HighestScore}" +
+            newRecordText;
+    }
+
+    private static string FormatTime(float seconds)
+    {
+        int totalSeconds = Mathf.Max(0, Mathf.FloorToInt(seconds));
+        int minutes = totalSeconds / 60;
+        int remainingSeconds = totalSeconds % 60;
+        return $"{minutes:00}:{remainingSeconds:00}";
     }
 
     private void RestartGame()

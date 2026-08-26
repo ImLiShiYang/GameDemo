@@ -84,10 +84,7 @@ public class GameSettingsManager : MonoBehaviour
             GetValidQualityLevel(qualityLevel);
 
         // true表示立即应用阴影、贴图等较昂贵的画质变化。
-        QualitySettings.SetQualityLevel(
-            validLevel,
-            true
-        );
+        QualitySettings.SetQualityLevel(validLevel,true);
     }
 
     private static int GetValidQualityLevel(

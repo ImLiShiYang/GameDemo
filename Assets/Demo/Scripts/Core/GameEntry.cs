@@ -36,6 +36,9 @@ public class GameEntry : MonoBehaviour
     
     [SerializeField]
     private SaveManager saveManager;
+
+    [SerializeField]
+    private ScoreManager scoreManager;
     
     public static SaveManager Save
     {
@@ -58,6 +61,26 @@ public class GameEntry : MonoBehaviour
             }
 
             return Instance.saveManager;
+        }
+    }
+
+    public static ScoreManager Score
+    {
+        get
+        {
+            if (Instance == null)
+            {
+                Debug.LogError("场景中没有 GameEntry。");
+                return null;
+            }
+
+            if (Instance.scoreManager == null)
+            {
+                Debug.LogError("GameEntry 没有找到 ScoreManager。", Instance);
+                return null;
+            }
+
+            return Instance.scoreManager;
         }
     }
     
@@ -294,6 +317,16 @@ public class GameEntry : MonoBehaviour
         if (saveManager == null)
         {
             saveManager = gameObject.AddComponent<SaveManager>();
+        }
+
+        if (scoreManager == null)
+        {
+            scoreManager = GetComponentInChildren<ScoreManager>(true);
+        }
+
+        if (scoreManager == null)
+        {
+            scoreManager = gameObject.AddComponent<ScoreManager>();
         }
         
         if (saveManager == null)

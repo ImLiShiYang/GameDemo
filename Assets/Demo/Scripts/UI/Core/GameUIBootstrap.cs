@@ -126,6 +126,13 @@ public class GameUIBootstrap : MonoBehaviour
     
     private void StartWaves()
     {
+        ScoreManager scoreManager = GameEntry.Score;
+
+        if (scoreManager != null)
+        {
+            scoreManager.BeginRun();
+        }
+
         WaveManager waveManager = GameEntry.Wave;
 
         if (waveManager != null)

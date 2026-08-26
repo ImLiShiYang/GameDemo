@@ -153,11 +153,7 @@ public class SaveManager : MonoBehaviour
             QualitySettings.names.Length - 1
         );
 
-        int validQualityLevel = Mathf.Clamp(
-            Data.settings.qualityLevel,
-            0,
-            highestQualityLevel
-        );
+        int validQualityLevel = Mathf.Clamp(Data.settings.qualityLevel,0,highestQualityLevel);
 
         if(Data.settings.qualityLevel != validQualityLevel)
         {

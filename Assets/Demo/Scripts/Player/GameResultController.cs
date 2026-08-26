@@ -142,6 +142,11 @@ public class GameResultController : MonoBehaviour
 
     private void ShowResult(bool victory,string title,string detail)
     {
+        ScoreManager scoreManager = GameEntry.Score;
+        ScoreResult scoreResult = victory && scoreManager != null
+            ? scoreManager.CompleteVictory(playerHealth)
+            : null;
+
         UIManager uiManager =
             GameEntry.UI;
 
@@ -169,7 +174,11 @@ public class GameResultController : MonoBehaviour
             {
                 Victory = victory,
                 Title = title,
-                Detail = detail
+                Detail = detail,
+                Score = scoreResult,
+                HighestScore = scoreResult != null
+                    ? scoreResult.HighestScore
+                    : scoreManager != null ? scoreManager.HighestScore : 0
             };
 
         uiManager.Open<ResultPanel>(
