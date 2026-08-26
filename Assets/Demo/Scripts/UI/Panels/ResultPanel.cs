@@ -1,6 +1,5 @@
 using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class ResultOpenArgs
@@ -18,6 +17,9 @@ public class ResultOpenArgs
 
 public class ResultPanel : UIBase
 {
+    private const string MainSceneAddress = "Scene/Main";
+    private const string LoginSceneName = "LoginScene";
+
     [Header("Text")]
     [SerializeField]
     private TMP_Text titleText;
@@ -160,28 +162,39 @@ public class ResultPanel : UIBase
     {
         Time.timeScale = 1f;
 
-        // 下一次场景加载后直接开始战斗。
-        GameUIBootstrap.StartGameDirectlyOnNextLoad();
-
-        Scene scene =
-            SceneManager.GetActiveScene();
-
-        SceneManager.LoadScene(
-            scene.buildIndex
-        );
+        ReloadMainScene();
     }
 
     private void BackToMainMenu()
     {
         Time.timeScale = 1f;
 
-        // 正常重新加载场景，
-        // GameUIBootstrap 会显示主菜单。
-        Scene scene =
-            SceneManager.GetActiveScene();
+        ReturnToLoginScene();
+    }
 
-        SceneManager.LoadScene(
-            scene.buildIndex
-        );
+    private void ReloadMainScene()
+    {
+        AddressableSceneLoader loader = FindFirstObjectByType<AddressableSceneLoader>();
+
+        if (loader == null)
+        {
+            Debug.LogError("结算界面没有找到 AddressableSceneLoader。", this);
+            return;
+        }
+
+        loader.LoadScene(MainSceneAddress);
+    }
+
+    private void ReturnToLoginScene()
+    {
+        AddressableSceneLoader loader = FindFirstObjectByType<AddressableSceneLoader>();
+
+        if (loader == null)
+        {
+            Debug.LogError("结算界面没有找到 AddressableSceneLoader。", this);
+            return;
+        }
+
+        loader.LoadBuiltInScene(LoginSceneName);
     }
 }

@@ -1,9 +1,11 @@
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class PausePanel : UIBase
 {
+    private const string MainSceneAddress = "Scene/Main";
+    private const string LoginSceneName = "LoginScene";
+
     [Header("Buttons")]
     [SerializeField]
     private Button resumeButton;
@@ -183,13 +185,7 @@ public class PausePanel : UIBase
     private void RestartCurrentScene()
     {
         Time.timeScale = 1f;
-
-        Scene activeScene =
-            SceneManager.GetActiveScene();
-
-        SceneManager.LoadScene(
-            activeScene.buildIndex
-        );
+        ReloadMainScene();
     }
 
     private void BackToMainMenu()
@@ -198,12 +194,33 @@ public class PausePanel : UIBase
         // 避免新场景继承 timeScale = 0 的状态。
         Time.timeScale = 1f;
 
-        Scene currentScene =
-            SceneManager.GetActiveScene();
+        ReturnToLoginScene();
+    }
 
-        SceneManager.LoadScene(
-            currentScene.buildIndex
-        );
+    private void ReloadMainScene()
+    {
+        AddressableSceneLoader loader = FindFirstObjectByType<AddressableSceneLoader>();
+
+        if (loader == null)
+        {
+            Debug.LogError("暂停界面没有找到 AddressableSceneLoader。", this);
+            return;
+        }
+
+        loader.LoadScene(MainSceneAddress);
+    }
+
+    private void ReturnToLoginScene()
+    {
+        AddressableSceneLoader loader = FindFirstObjectByType<AddressableSceneLoader>();
+
+        if (loader == null)
+        {
+            Debug.LogError("暂停界面没有找到 AddressableSceneLoader。", this);
+            return;
+        }
+
+        loader.LoadBuiltInScene(LoginSceneName);
     }
 
     private void QuitGame()

@@ -15,39 +15,13 @@ public class GameUIBootstrap : MonoBehaviour
 
     [Header("Startup")]
     [SerializeField]
-    private bool openHudOnStart = true;
-
-    [SerializeField]
     private bool openTutorialOnStart = true;
-    
-    [SerializeField]
-    private bool openMainMenuOnStart = true;
-    
-    private UIManager cachedUIManager;
-    private static bool startGameDirectlyOnNextLoad;
 
     private void Awake()
     {
         TryFindPlayerReferences();
     }
 
-    private void OnEnable()
-    {
-        MainMenuPanel.GameStarted +=
-            HandleGameStarted;
-    }
-
-    private void OnDisable()
-    {
-        MainMenuPanel.GameStarted -=
-            HandleGameStarted;
-    }
-    
-    public static void StartGameDirectlyOnNextLoad()
-    {
-        startGameDirectlyOnNextLoad = true;
-    }
-    
     private void Start()
     {
         if (GameEntry.Instance == null)
@@ -67,27 +41,7 @@ public class GameUIBootstrap : MonoBehaviour
             return;
         }
 
-        if (startGameDirectlyOnNextLoad)
-        {
-            startGameDirectlyOnNextLoad = false;
-
-            Time.timeScale = 1f;
-
-            StartGameplay();
-        }
-        else if (openMainMenuOnStart && uiManager.HasConfig(UIType.MainMenu))
-        {
-            uiManager.Open(UIType.MainMenu);
-        }
-        else if (openHudOnStart && uiManager.HasConfig(UIType.HUD))
-        {
-            StartGameplay();
-        }
-        
-    }
-
-    private void HandleGameStarted()
-    {
+        Time.timeScale = 1f;
         StartGameplay();
     }
     

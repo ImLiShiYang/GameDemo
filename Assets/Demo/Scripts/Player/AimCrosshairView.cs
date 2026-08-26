@@ -70,8 +70,6 @@ public class AimCrosshairView : MonoBehaviour
 
     private void OnEnable()
     {
-        MainMenuPanel.GameStarted += HandleGameStarted;
-
         ApplyCursorState(true);
     }
 
@@ -89,32 +87,12 @@ public class AimCrosshairView : MonoBehaviour
 
     private void OnDisable()
     {
-        MainMenuPanel.GameStarted -= HandleGameStarted;
-
         RestoreCursor();
     }
 
     private void OnDestroy()
     {
-        MainMenuPanel.GameStarted -= HandleGameStarted;
-
         RestoreCursor();
-    }
-
-    private void HandleGameStarted()
-    {
-        // 首次指导打开时游戏处于暂停状态，需要保留系统鼠标。
-        if (Time.timeScale <= 0f)
-        {
-            Cursor.visible = true;
-            Cursor.lockState = CursorLockMode.None;
-            return;
-        }
-        
-        // 准星通常在主菜单打开前就已启用，因此关闭主菜单时
-        // OnEnable 不会再次执行。进入战斗后显式重应用光标状态，
-        // 避免主菜单留下 Cursor.visible = true。
-        ApplyCursorState(Application.isFocused);
     }
     
     private void LateUpdate()

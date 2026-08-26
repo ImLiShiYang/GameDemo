@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Audio;
 
@@ -14,6 +17,10 @@ public class GameAudioManager : MonoBehaviour
     private const string SfxVolumeParameter = "SFXVolume";
 
     private const float MutedDecibels = -80f;
+
+    private const string NormalMusicAddress = "Audio/Music/BattleNormal";
+
+    private const string BossMusicAddress = "Audio/Music/BattleBoss";
 
     public static GameAudioManager Instance
     {
@@ -35,15 +42,12 @@ public class GameAudioManager : MonoBehaviour
     [SerializeField]
     private AudioSource musicSource;
 
-    [Header("Music Clips")]
-    [SerializeField]
-    private AudioClip normalMusic;
-
-    [SerializeField]
-    private AudioClip bossMusic;
-
     private WaveManager waveManager;
     private Health currentBossHealth;
+    private readonly Dictionary<string, AudioClip> musicCache = new();
+    private string currentMusicAddress;
+    private int musicRequestVersion;
+    private bool isDestroying;
 
     public AudioMixerGroup SfxMixerGroup => sfxMixerGroup;
 
@@ -87,6 +91,28 @@ public class GameAudioManager : MonoBehaviour
 
     private void OnDestroy()
     {
+        isDestroying = true;
+        musicRequestVersion++;
+
+        if(musicSource != null)
+        {
+            musicSource.Stop();
+            musicSource.clip = null;
+        }
+
+        AddressableResourceManager resourceManager = AddressableResourceManager.Instance;
+
+        if(resourceManager != null)
+        {
+            foreach(string address in musicCache.Keys)
+            {
+                resourceManager.ReleaseAudio(address);
+            }
+        }
+
+        musicCache.Clear();
+        currentMusicAddress = null;
+
         UnbindBoss();
 
         if(waveManager != null)
@@ -182,29 +208,86 @@ public class GameAudioManager : MonoBehaviour
 
     public void PlayNormalMusic()
     {
-        PlayMusic(normalMusic);
+        PlayMusic(NormalMusicAddress);
     }
 
     public void PlayBossMusic()
     {
-        PlayMusic(bossMusic);
+        PlayMusic(BossMusicAddress);
     }
 
-    private void PlayMusic(AudioClip clip)
+    private async void PlayMusic(string address)
     {
-        if(musicSource == null || clip == null)
+        try
+        {
+            await PlayMusicAsync(address);
+        }
+        catch(Exception exception)
+        {
+            Debug.LogError($"异步切换背景音乐失败：{address}\n{exception}", this);
+        }
+    }
+
+    private async Task PlayMusicAsync(string address)
+    {
+        if(isDestroying || musicSource == null || string.IsNullOrEmpty(address))
         {
             return;
         }
 
-        // 已经在播放同一首音乐时不重新开始。
-        if(musicSource.clip == clip && musicSource.isPlaying)
+        if(currentMusicAddress == address && musicSource.clip != null && musicSource.isPlaying)
         {
             return;
         }
 
-        musicSource.clip = clip;
+        AddressableResourceManager resourceManager = AddressableResourceManager.Instance;
+
+        if(resourceManager == null)
+        {
+            throw new InvalidOperationException("场景中没有 AddressableResourceManager，无法加载背景音乐。");
+        }
+
+        int requestVersion = ++musicRequestVersion;
+
+        if(!musicCache.TryGetValue(address, out AudioClip loadedClip))
+        {
+            AudioClip requestedClip = await resourceManager.LoadAudioAsync(address);
+
+            if(this == null || isDestroying)
+            {
+                resourceManager.ReleaseAudio(address);
+                return;
+            }
+
+            // 两个并发请求可能同时等待同一个 Handle。后完成的请求归还多取的一次引用。
+            if(musicCache.TryGetValue(address, out loadedClip))
+            {
+                resourceManager.ReleaseAudio(address);
+            }
+            else
+            {
+                loadedClip = requestedClip;
+                musicCache[address] = loadedClip;
+            }
+        }
+        else
+        {
+            Debug.Log($"使用已缓存音乐：{address}", this);
+        }
+
+        // 加载过程中可能已经请求了另一首音乐，或者当前 GameAudioManager 已被销毁。
+        // 过期请求不能覆盖新音乐，但资源会留在本地缓存供后续切换复用。
+        if(this == null || isDestroying || requestVersion != musicRequestVersion)
+        {
+            return;
+        }
+
+        musicSource.Stop();
+        musicSource.clip = loadedClip;
+        currentMusicAddress = address;
         musicSource.Play();
+
+        Debug.Log($"开始播放 Addressables 音乐：{address}", this);
     }
 
     /// <summary>
