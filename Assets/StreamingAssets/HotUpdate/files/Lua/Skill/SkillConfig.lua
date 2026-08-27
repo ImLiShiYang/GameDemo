@@ -27,9 +27,9 @@ local skills =
     
         executor = "PiercingBeam",
     
-        damage = 100,
+        damage = 60,
         range = 12,
-        cooldown = 4,
+        cooldown = 6,
         warningTime = 0,
         interruptPower = 1
     })

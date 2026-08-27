@@ -352,6 +352,22 @@ public sealed class LuaManager : MonoBehaviour
         string relativeModulePath =
             moduleName.Replace('.', Path.DirectorySeparatorChar);
 
+        string hotUpdateRelativePath = Path.Combine(
+            "Lua",
+            relativeModulePath + ".lua"
+        );
+
+        string hotUpdatePath = HotUpdatePaths.GetCacheFilePath(
+            hotUpdateRelativePath
+        );
+
+        if (File.Exists(hotUpdatePath))
+        {
+            moduleName = hotUpdatePath;
+            return RemoveUtf8Bom(File.ReadAllBytes(hotUpdatePath));
+        }
+
+#if UNITY_EDITOR
         string fullPath = Path.Combine(
             Application.dataPath,
             LuaRootRelativePath,
@@ -367,6 +383,9 @@ public sealed class LuaManager : MonoBehaviour
 
         byte[] bytes = File.ReadAllBytes(fullPath);
         return RemoveUtf8Bom(bytes);
+#else
+        return null;
+#endif
     }
 
     private bool ValidateModuleName(string moduleName)

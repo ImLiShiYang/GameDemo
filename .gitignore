@@ -10,3 +10,8 @@
 !/Assets/Demo.meta
 !/Assets/Demo/
 !/Assets/Demo/**
+
+# Keep the Lua/config baseline that ships with the player.
+!/Assets/StreamingAssets.meta
+!/Assets/StreamingAssets/
+!/Assets/StreamingAssets/**

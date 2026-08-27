@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "minimumAppVersion": "0.1.0",
+  "files": [
+    {
+      "path": "Lua/Buff/BuffBase.lua",
+      "size": 1147,
+      "sha256": "d8a1137963a306ddbb18c4075967f814de45ef01af2b3f5559f76bb8762fbfa7"
+    },
+    {
+      "path": "Lua/Buff/BuffConfig.lua",
+      "size": 1124,
+      "sha256": "20c975a06c4394e9d234329108f721f1e68cbf90d397c421ba6f6609af8d1b85"
+    },
+    {
+      "path": "Lua/Event.lua",
+      "size": 824,
+      "sha256": "02313db3483ff2741304cb8fc70d8487acbab773159109826a02b14fc3c0d4a8"
+    },
+    {
+      "path": "Lua/Skill/SkillBase.lua",
+      "size": 1019,
+      "sha256": "4e4d424e97881ada44dce3465663cd010b27f81ac1d413fc4c43a7c8bb8d433d"
+    },
+    {
+      "path": "Lua/Skill/SkillConfig.lua",
+      "size": 1389,
+      "sha256": "0664a385da99b3f756cd4b3eb313aded3927e32e1d33e9f82df85d694823bcaf"
+    },
+    {
+      "path": "Lua/StateMachine.lua",
+      "size": 953,
+      "sha256": "3f1f350508f33af43a2505ef476ae93ee4bb25bff978e435df7b51a744bad3af"
+    },
+    {
+      "path": "Lua/StateMachineTest.lua",
+      "size": 1840,
+      "sha256": "f1d6e481e6b81eba940b0b952d87a5b110d2a41ea9437ce1bed3fd424f8bbb25"
+    },
+    {
+      "path": "Lua/Test.lua",
+      "size": 494,
+      "sha256": "dd3e6523cab391083c48a5e8142b7829efafadfe7b41e0bb1845e66dd1da9f73"
+    },
+    {
+      "path": "Lua/UI/MainMenu.lua",
+      "size": 2941,
+      "sha256": "c78a538ff9d6eaba5724a997434d744e8725f15e8d18695eae31fcef1abe41d1"
+    }
+  ]
+}
