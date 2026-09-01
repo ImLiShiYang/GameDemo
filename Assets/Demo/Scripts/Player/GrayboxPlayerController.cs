@@ -154,6 +154,15 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private CharacterController characterController;
     private Vector3 currentMoveDirection;
+    private bool lockstepMovementEnabled;
+    private Vector3 lockstepMoveDirection;
+
+    /// <summary>
+    /// 帧同步启用后，普通 Update 仍负责瞄准、射击和动画，但不再直接修改 XZ 位置。
+    /// </summary>
+    public bool LockstepMovementEnabled => lockstepMovementEnabled;
+    public bool CanAcceptLockstepMovementInput => enabled && !isHitStunned && Time.timeScale > 0f;
+    public float LockstepMoveSpeed => walkSpeed * moveSpeedMultiplier;
     
     // 缓存 RaycastNonAlloc 的结果，避免每帧创建新数组。
     private readonly RaycastHit[] aimHits = new RaycastHit[16];
@@ -336,7 +345,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
         // 当前没有翻滚，并且这一帧刚按下翻滚键时，
         // 尝试进入翻滚状态。
-        if (!isRolling && Input.GetKeyDown(rollKey))
+        if (!lockstepMovementEnabled && !isRolling && Input.GetKeyDown(rollKey))
         {
             TryStartRoll();
         }
@@ -442,6 +451,12 @@ public class GrayboxPlayerController : MonoBehaviour
         float horizontal = Input.GetAxisRaw("Horizontal");
         float vertical = Input.GetAxisRaw("Vertical");
 
+        moveInputDirection = GetCameraRelativeMoveDirection(horizontal, vertical);
+    }
+
+    public Vector3 GetCameraRelativeMoveDirection(float horizontal, float vertical)
+    {
+
         Vector3 forward = cameraTransform != null
             ? cameraTransform.forward
             : transform.forward;
@@ -463,14 +478,26 @@ public class GrayboxPlayerController : MonoBehaviour
             right.Normalize();
         }
 
-        moveInputDirection =
+        Vector3 direction =
             forward * vertical +
             right * horizontal;
 
-        moveInputDirection = Vector3.ClampMagnitude(
-            moveInputDirection,
-            1f
-        );
+        return Vector3.ClampMagnitude(direction, 1f);
+    }
+
+    public void SetLockstepMovementEnabled(bool enabled)
+    {
+        lockstepMovementEnabled = enabled;
+        lockstepMoveDirection = Vector3.zero;
+        currentMoveDirection = Vector3.zero;
+    }
+
+    public void ApplyLockstepPose(Vector3 position, Vector3 confirmedMoveDirection)
+    {
+        lockstepMoveDirection = Vector3.ClampMagnitude(confirmedMoveDirection, 1f);
+
+        Vector3 currentPosition = transform.position;
+        transform.position = new Vector3(position.x, currentPosition.y, position.z);
     }
     
     public void PlayHitReaction()
@@ -627,6 +654,12 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private void UpdateMovement()
     {
+        if (lockstepMovementEnabled)
+        {
+            currentMoveDirection = lockstepMoveDirection;
+            return;
+        }
+
         currentMoveDirection = Vector3.MoveTowards(
             currentMoveDirection,
             moveInputDirection,
@@ -1558,7 +1591,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
     public void ApplyRollRootMotion(Vector3 animatorDeltaPosition)
     {
-        if (!isRolling || characterController == null)
+        if (lockstepMovementEnabled || !isRolling || characterController == null)
         {
             return;
         }
