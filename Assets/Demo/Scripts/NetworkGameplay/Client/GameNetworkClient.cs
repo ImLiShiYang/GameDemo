@@ -18,11 +18,29 @@ public sealed class GameNetworkClient : MonoBehaviour
     private Thread networkThread;
     private volatile bool running;
     private uint sendSequence;
+    private uint lastReceivedServerSequence;
+    private uint latestObservedServerTick;
+    private int serverTickRate = NetworkRuntime.DefaultTickRate;
+    private float lastSnapshotRealtime;
+    private long sentMessageCount;
+    private long receivedMessageCount;
 
     public string StatusText { get; private set; } = "未连接";
     public bool IsWelcomed { get; private set; }
     public WelcomeMessage LastWelcome { get; private set; }
     public uint LastSnapshotTick { get; private set; }
+    public long SentMessageCount => Interlocked.Read(ref sentMessageCount);
+    public long ReceivedMessageCount => Interlocked.Read(ref receivedMessageCount);
+    public float SecondsSinceLastSnapshot => LastSnapshotTick == 0 ? 0f : Mathf.Max(0f, Time.realtimeSinceStartup - lastSnapshotRealtime);
+    public uint EstimatedServerTick
+    {
+        get
+        {
+            uint elapsedTicks = (uint)Mathf.Max(0f, SecondsSinceLastSnapshot * serverTickRate);
+            return Math.Max(latestObservedServerTick, LastSnapshotTick + elapsedTicks);
+        }
+    }
+    public uint SnapshotLagTicks => EstimatedServerTick > LastSnapshotTick ? EstimatedServerTick - LastSnapshotTick : 0;
 
     public event Action<WelcomeMessage> Welcomed;
     public event Action<string> ConnectionFailed;
@@ -39,6 +57,11 @@ public sealed class GameNetworkClient : MonoBehaviour
         }
 
         running = true;
+        sendSequence = 0;
+        lastReceivedServerSequence = 0;
+        latestObservedServerTick = 0;
+        sentMessageCount = 0;
+        receivedMessageCount = 0;
         StatusText = $"正在连接 {address}:{port}";
         networkThread = new Thread(() => NetworkLoop(address, port, requestedPlayerId, playerName, buildVersion))
         {
@@ -157,8 +180,16 @@ public sealed class GameNetworkClient : MonoBehaviour
 
         try
         {
-            tcpClient = new TcpClient { NoDelay = true };
-            tcpClient.Connect(address, port);
+            tcpClient = new TcpClient { NoDelay = true, ReceiveTimeout = 15000, SendTimeout = 5000 };
+            IAsyncResult connectResult = tcpClient.BeginConnect(address, port, null, null);
+
+            if (!connectResult.AsyncWaitHandle.WaitOne(5000))
+            {
+                tcpClient.Close();
+                throw new TimeoutException($"连接 {address}:{port} 超过 5 秒未完成。");
+            }
+
+            tcpClient.EndConnect(connectResult);
             stream = tcpClient.GetStream();
             events.Enqueue(ClientEvent.Connected());
             ConnectRequestMessage request = new ConnectRequestMessage
@@ -212,6 +243,16 @@ public sealed class GameNetworkClient : MonoBehaviour
     {
         try
         {
+            if (lastReceivedServerSequence != 0 && packet.Header.Sequence <= lastReceivedServerSequence)
+            {
+                NetworkLog.Warning($"客户端过滤重复或过期服务器消息：Sequence {packet.Header.Sequence}，Last {lastReceivedServerSequence}。");
+                return;
+            }
+
+            lastReceivedServerSequence = packet.Header.Sequence;
+            latestObservedServerTick = Math.Max(latestObservedServerTick, packet.Header.ServerTick);
+            Interlocked.Increment(ref receivedMessageCount);
+
             switch (packet.Header.MessageType)
             {
                 case NetworkMessageType.Welcome:
@@ -228,6 +269,8 @@ public sealed class GameNetworkClient : MonoBehaviour
                     NetworkRuntime.LocalPlayerEntityId = welcome.PlayerEntityId;
                     NetworkRuntime.MatchId = welcome.MatchId;
                     NetworkRuntime.ServerTick = welcome.ServerTick;
+                    latestObservedServerTick = welcome.ServerTick;
+                    serverTickRate = Mathf.Max(1, welcome.TickRate);
                     LastSnapshotTick = 0;
                     IsWelcomed = true;
                     LastWelcome = welcome;
@@ -250,6 +293,8 @@ public sealed class GameNetworkClient : MonoBehaviour
                     }
 
                     LastSnapshotTick = snapshot.ServerTick;
+                    latestObservedServerTick = Math.Max(latestObservedServerTick, snapshot.ServerTick);
+                    lastSnapshotRealtime = Time.realtimeSinceStartup;
                     NetworkRuntime.ServerTick = snapshot.ServerTick;
                     SnapshotReceived?.Invoke(snapshot);
                     break;
@@ -349,6 +394,7 @@ public sealed class GameNetworkClient : MonoBehaviour
         lock (sendLock)
         {
             NetworkPacketCodec.WritePacket(stream, messageType, payload, ++sendSequence, serverTick, matchId);
+            Interlocked.Increment(ref sentMessageCount);
         }
     }
 

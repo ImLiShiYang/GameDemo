@@ -7,6 +7,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
     private readonly Dictionary<int, NetworkEntity> entities = new Dictionary<int, NetworkEntity>();
     private readonly HashSet<int> snapshotPlayerIds = new HashSet<int>();
     private readonly Dictionary<int, uint> despawnedEntityTicks = new Dictionary<int, uint>();
+    private readonly HashSet<int> reportedUnknownEntityIds = new HashSet<int>();
 
     private GameNetworkClient client;
     private NetworkPrefabCatalog prefabCatalog;
@@ -86,7 +87,11 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
             if (!entities.TryGetValue(state.EntityId, out NetworkEntity entity))
             {
-                NetworkLog.Warning($"客户端快照引用未知 EntityId {state.EntityId}；等待 EntitySpawn，不从快照擅自创建。");
+                if (reportedUnknownEntityIds.Add(state.EntityId))
+                {
+                    NetworkLog.Warning($"客户端快照引用未知 EntityId {state.EntityId}；等待 EntitySpawn，不从快照擅自创建。");
+                }
+
                 continue;
             }
 
@@ -204,6 +209,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         }
 
         entityObject.name = $"NetworkEntity_{message.EntityType}_{message.EntityId}";
+        reportedUnknownEntityIds.Remove(message.EntityId);
         DisableClientGameplay(entityObject);
         NetworkEntity entity = entityObject.GetComponent<NetworkEntity>() ?? entityObject.AddComponent<NetworkEntity>();
         entity.Configure(message.EntityId, message.EntityType, message.PrefabId, message.OwnerPlayerId, false);
@@ -240,6 +246,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         }
 
         despawnedEntityTicks[message.EntityId] = serverTick;
+        reportedUnknownEntityIds.Remove(message.EntityId);
 
         if (!entities.TryGetValue(message.EntityId, out NetworkEntity entity))
         {
@@ -271,6 +278,20 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void HandleBattleEvent(BattleEventMessage message, uint serverTick)
     {
+        if (message.EventType == BattleEventType.PlayerFired)
+        {
+            if (entities.TryGetValue(message.SourceEntityId, out NetworkEntity sourceEntity))
+            {
+                sourceEntity.GetComponent<NetworkTransformInterpolator>()?.PlayAttack();
+            }
+            else
+            {
+                NetworkLog.Warning($"客户端开火事件引用未知 SourceEntityId {message.SourceEntityId}。");
+            }
+
+            return;
+        }
+
         if (message.EventType != BattleEventType.Damage && message.EventType != BattleEventType.EntityDied)
         {
             return;

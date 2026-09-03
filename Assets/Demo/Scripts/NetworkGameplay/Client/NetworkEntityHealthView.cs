@@ -7,13 +7,18 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
 {
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorId = Shader.PropertyToID("_Color");
+    private static readonly int HitHash = Animator.StringToHash("Hit");
+    private static readonly int DeadHash = Animator.StringToHash("Dead");
 
     private readonly MaterialPropertyBlock propertyBlock = new MaterialPropertyBlock();
     private Renderer[] renderers;
     private NetworkEntity networkEntity;
+    private Animator animator;
     private Vector3 baseScale;
     private float damageFlashUntil;
     private bool dead;
+    private bool hasHitTrigger;
+    private bool hasDeadBool;
 
     public float CurrentHealth { get; private set; }
     public float MaxHealth { get; private set; }
@@ -21,6 +26,8 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
     private void Awake()
     {
         baseScale = transform.localScale;
+        animator = GetComponentInChildren<Animator>();
+        CacheAnimatorParameters();
     }
 
     public void Initialize(NetworkEntity entity, float currentHealth, float maxHealth)
@@ -30,6 +37,12 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
         transform.localScale = baseScale;
         dead = false;
         damageFlashUntil = 0f;
+
+        if (animator != null && hasDeadBool)
+        {
+            animator.SetBool(DeadHash, false);
+        }
+
         ApplyHealth(currentHealth, maxHealth);
     }
 
@@ -49,6 +62,11 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
 
         damageFlashUntil = Time.unscaledTime + 0.12f;
         SetColor(Color.white);
+
+        if (animator != null && hasHitTrigger)
+        {
+            animator.SetTrigger(HitHash);
+        }
     }
 
     public void PlayDeath()
@@ -59,8 +77,14 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
         }
 
         dead = true;
+        GetComponent<NetworkTransformInterpolator>()?.StopInterpolation();
         SetColor(new Color(0.15f, 0.15f, 0.15f, 1f));
         transform.localScale = new Vector3(transform.localScale.x, transform.localScale.y * 0.35f, transform.localScale.z);
+
+        if (animator != null && hasDeadBool)
+        {
+            animator.SetBool(DeadHash, true);
+        }
     }
 
     private void Update()
@@ -109,6 +133,20 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
             propertyBlock.SetColor(BaseColorId, color);
             propertyBlock.SetColor(ColorId, color);
             targetRenderer.SetPropertyBlock(propertyBlock);
+        }
+    }
+
+    private void CacheAnimatorParameters()
+    {
+        if (animator == null)
+        {
+            return;
+        }
+
+        foreach (AnimatorControllerParameter parameter in animator.parameters)
+        {
+            hasHitTrigger |= parameter.nameHash == HitHash && parameter.type == AnimatorControllerParameterType.Trigger;
+            hasDeadBool |= parameter.nameHash == DeadHash && parameter.type == AnimatorControllerParameterType.Bool;
         }
     }
 }

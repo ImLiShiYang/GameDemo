@@ -476,6 +476,12 @@ public static class NetworkProtocol
             ValidateEntityId(message.TargetEntityId);
         }
 
+        if (message.EventType == BattleEventType.PlayerFired)
+        {
+            ValidateEntityId(message.SourceEntityId);
+            ValidateEntityId(message.TargetEntityId);
+        }
+
         if (message.SourceEntityId < 0 || message.TargetEntityId < 0)
         {
             throw new InvalidDataException("战斗事件包含非法 EntityId。");

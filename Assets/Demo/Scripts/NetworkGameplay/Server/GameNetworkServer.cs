@@ -32,6 +32,8 @@ public sealed class GameNetworkServer : MonoBehaviour
     private float tickAccumulator;
     // 当前监听的端口，仅用于记录和日志。
     private int port;
+    private long sentMessageCount;
+    private long receivedMessageCount;
 
     // 当前通过验证并在线的玩家数量。
     public int ConnectedPlayerCount => players.Count;
@@ -39,6 +41,8 @@ public sealed class GameNetworkServer : MonoBehaviour
     public long MatchId { get; private set; }
     // 已执行的服务器逻辑 Tick 编号。
     public uint ServerTick { get; private set; }
+    public long SentMessageCount => Interlocked.Read(ref sentMessageCount);
+    public long ReceivedMessageCount => Interlocked.Read(ref receivedMessageCount);
 
     // 玩家通过 ConnectRequest 验证后通知 ServerPlayerManager 创建权威玩家实体。
     public event Action<int, int> PlayerAuthenticated;
@@ -222,6 +226,13 @@ public sealed class GameNetworkServer : MonoBehaviour
     {
         try
         {
+            if (!connection.TryAcceptIncomingSequence(packet.Header.Sequence))
+            {
+                NetworkLog.Warning($"服务器过滤 Connection {connection.ConnectionId} 的重复或过期消息 Sequence {packet.Header.Sequence}。");
+                return;
+            }
+
+            Interlocked.Increment(ref receivedMessageCount);
             // 未认证连接只能先发送 ConnectRequest，防止未分配 PlayerId 的连接执行游戏操作。
             if (!connection.IsAuthenticated)
             {
@@ -307,6 +318,7 @@ public sealed class GameNetworkServer : MonoBehaviour
         };
         // 向刚认证的客户端发送 Welcome；它收到后才会进入 Main 场景。
         connection.Send(NetworkMessageType.Welcome, NetworkProtocol.Serialize(welcome), ServerTick, MatchId);
+        Interlocked.Increment(ref sentMessageCount);
         // 通知 ServerPlayerManager 创建这名玩家对应的权威场景实体。
         PlayerAuthenticated?.Invoke(connection.PlayerId, connection.PlayerEntityId);
         // 记录认证成功。
@@ -325,6 +337,7 @@ public sealed class GameNetworkServer : MonoBehaviour
             {
                 // 包头携带对应的服务器 Tick 和 MatchId，客户端据此丢弃旧快照或错误对局快照。
                 connection.Send(NetworkMessageType.WorldSnapshot, payload, snapshot.ServerTick, MatchId);
+                Interlocked.Increment(ref sentMessageCount);
             }
             catch (Exception exception)
             {
@@ -349,6 +362,7 @@ public sealed class GameNetworkServer : MonoBehaviour
         try
         {
             connection.Send(NetworkMessageType.EntitySpawn, NetworkProtocol.Serialize(message), ServerTick, MatchId);
+            Interlocked.Increment(ref sentMessageCount);
         }
         catch (Exception exception)
         {
@@ -369,6 +383,7 @@ public sealed class GameNetworkServer : MonoBehaviour
             try
             {
                 connection.Send(NetworkMessageType.EntitySpawn, payload, ServerTick, MatchId);
+                Interlocked.Increment(ref sentMessageCount);
             }
             catch (Exception exception)
             {
@@ -390,6 +405,7 @@ public sealed class GameNetworkServer : MonoBehaviour
             try
             {
                 connection.Send(NetworkMessageType.EntityDespawn, payload, ServerTick, MatchId);
+                Interlocked.Increment(ref sentMessageCount);
             }
             catch (Exception exception)
             {
@@ -411,6 +427,7 @@ public sealed class GameNetworkServer : MonoBehaviour
             try
             {
                 connection.Send(NetworkMessageType.BattleEvent, payload, ServerTick, MatchId);
+                Interlocked.Increment(ref sentMessageCount);
             }
             catch (Exception exception)
             {
@@ -431,6 +448,7 @@ public sealed class GameNetworkServer : MonoBehaviour
                 ServerTick,
                 MatchId
             );
+            Interlocked.Increment(ref sentMessageCount);
         }
         catch (Exception exception)
         {
@@ -534,6 +552,7 @@ public sealed class GameNetworkServer : MonoBehaviour
         private int closed;
         // 此连接发出的网络包序号。
         private uint sendSequence;
+        private uint lastReceivedSequence;
 
         public ServerConnection(int connectionId, TcpClient client, ConcurrentQueue<InboundItem> inboundItems)
         {
@@ -541,6 +560,8 @@ public sealed class GameNetworkServer : MonoBehaviour
             ConnectionId = connectionId;
             // 保存 TCP 客户端对象。
             this.client = client;
+            this.client.ReceiveTimeout = 30000;
+            this.client.SendTimeout = 5000;
             // 保存主线程消费的队列。
             this.inboundItems = inboundItems;
             // 获取 TCP 字节流，供收包和发包使用。
@@ -584,6 +605,17 @@ public sealed class GameNetworkServer : MonoBehaviour
             PlayerName = string.IsNullOrWhiteSpace(playerName) ? $"Player {playerId}" : playerName;
             // 最后才开放游戏消息处理，确保前面所有身份字段已完整写入。
             IsAuthenticated = true;
+        }
+
+        public bool TryAcceptIncomingSequence(uint sequence)
+        {
+            if (sequence == 0 || sequence <= lastReceivedSequence)
+            {
+                return false;
+            }
+
+            lastReceivedSequence = sequence;
+            return true;
         }
 
         public void Send(NetworkMessageType messageType, byte[] payload, uint serverTick, long matchId)

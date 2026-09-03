@@ -194,7 +194,23 @@ public sealed class ServerPlayerManager : MonoBehaviour
         }
 
         Vector3 origin = player.GameObject.transform.position + Vector3.up + direction.normalized * 0.8f;
-        projectileRegistry?.SpawnPlayerProjectile(player.PlayerId, player.EntityId, origin, direction.normalized);
+        int projectileEntityId = projectileRegistry != null
+            ? projectileRegistry.SpawnPlayerProjectile(player.PlayerId, player.EntityId, origin, direction.normalized)
+            : 0;
+
+        if (projectileEntityId > 0)
+        {
+            BattleNetworkState battleState = battleFlow?.State;
+            server.BroadcastBattleEvent(new BattleEventMessage
+            {
+                EventType = BattleEventType.PlayerFired,
+                SourceEntityId = player.EntityId,
+                TargetEntityId = projectileEntityId,
+                Position = origin,
+                Phase = battleState?.Phase ?? BattlePhase.WaitingForPlayers,
+                CurrentWave = battleState?.CurrentWave ?? 0
+            });
+        }
     }
 
     private static bool IsAlive(ServerPlayer player)
