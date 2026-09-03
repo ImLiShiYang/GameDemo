@@ -96,10 +96,18 @@ public sealed class ClientEntityRegistry : MonoBehaviour
                 continue;
             }
 
-            NetworkTransformInterpolator interpolator = entity.GetComponent<NetworkTransformInterpolator>();
-            interpolator.ApplyState(state);
-            NetworkEntityHealthView healthView = entity.GetComponent<NetworkEntityHealthView>();
-            healthView?.ApplyHealth(state.CurrentHealth, state.MaxHealth);
+            if (state.EntityType == NetworkEntityType.Projectile)
+            {
+                ClientProjectileView projectileView = entity.GetComponent<ClientProjectileView>();
+                projectileView?.ApplyState(state);
+            }
+            else
+            {
+                NetworkTransformInterpolator interpolator = entity.GetComponent<NetworkTransformInterpolator>();
+                interpolator?.ApplyState(state);
+                NetworkEntityHealthView healthView = entity.GetComponent<NetworkEntityHealthView>();
+                healthView?.ApplyHealth(state.CurrentHealth, state.MaxHealth);
+            }
         }
 
         RemoveMissingRemotePlayers();
@@ -199,14 +207,26 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         DisableClientGameplay(entityObject);
         NetworkEntity entity = entityObject.GetComponent<NetworkEntity>() ?? entityObject.AddComponent<NetworkEntity>();
         entity.Configure(message.EntityId, message.EntityType, message.PrefabId, message.OwnerPlayerId, false);
-        NetworkTransformInterpolator interpolator = entityObject.GetComponent<NetworkTransformInterpolator>() ??
-            entityObject.AddComponent<NetworkTransformInterpolator>();
-        interpolator.Initialize(false);
-        interpolator.ApplySpawn(message);
-        NetworkEntityHealthView healthView = entityObject.GetComponent<NetworkEntityHealthView>() ??
-            entityObject.AddComponent<NetworkEntityHealthView>();
-        healthView.enabled = true;
-        healthView.Initialize(entity, message.CurrentHealth, message.MaxHealth);
+
+        if (message.EntityType == NetworkEntityType.Projectile)
+        {
+            ClientProjectileView projectileView = entityObject.GetComponent<ClientProjectileView>() ??
+                entityObject.AddComponent<ClientProjectileView>();
+            projectileView.enabled = true;
+            projectileView.Initialize(message, serverTick);
+        }
+        else
+        {
+            NetworkTransformInterpolator interpolator = entityObject.GetComponent<NetworkTransformInterpolator>() ??
+                entityObject.AddComponent<NetworkTransformInterpolator>();
+            interpolator.enabled = true;
+            interpolator.Initialize(false);
+            interpolator.ApplySpawn(message);
+            NetworkEntityHealthView healthView = entityObject.GetComponent<NetworkEntityHealthView>() ??
+                entityObject.AddComponent<NetworkEntityHealthView>();
+            healthView.enabled = true;
+            healthView.Initialize(entity, message.CurrentHealth, message.MaxHealth);
+        }
         entities.Add(message.EntityId, entity);
         NetworkLog.Info($"客户端从对象池创建实体：EntityId {message.EntityId}，Type {message.EntityType}，PrefabId {message.PrefabId}。");
     }
@@ -251,6 +271,11 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void HandleBattleEvent(BattleEventMessage message, uint serverTick)
     {
+        if (message.EventType != BattleEventType.Damage && message.EventType != BattleEventType.EntityDied)
+        {
+            return;
+        }
+
         if (!entities.TryGetValue(message.TargetEntityId, out NetworkEntity entity))
         {
             if (!despawnedEntityTicks.ContainsKey(message.TargetEntityId))
@@ -293,7 +318,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         foreach (MonoBehaviour behaviour in playerObject.GetComponentsInChildren<MonoBehaviour>(true))
         {
             if (behaviour is NetworkEntity || behaviour is NetworkTransformInterpolator ||
-                behaviour is NetworkEntityHealthView)
+                behaviour is NetworkEntityHealthView || behaviour is ClientProjectileView)
             {
                 continue;
             }

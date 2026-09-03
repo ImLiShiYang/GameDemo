@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -7,9 +8,10 @@ using UnityEngine;
 public sealed class ServerEntityRegistry : MonoBehaviour
 {
     private const int FirstDynamicEntityId = 2001;
-    private const int TestRespawnDelayTicks = NetworkRuntime.DefaultTickRate * 3;
     private const float EnemyMoveSpeed = 1.6f;
     private const float EnemyStoppingDistance = 1.8f;
+    private const float BossMoveSpeed = 1.15f;
+    private const float BossStoppingDistance = 2.4f;
     private const float EnemyHitRadius = 1.1f;
 
     private readonly Dictionary<int, ServerEntityRecord> entities = new Dictionary<int, ServerEntityRecord>();
@@ -18,11 +20,9 @@ public sealed class ServerEntityRegistry : MonoBehaviour
     private ServerPlayerManager playerManager;
     private int nextEntityId = FirstDynamicEntityId;
     private bool scenePrepared;
-    private Vector3 testOrigin;
-    private ServerEntityRecord testEnemy;
-    private uint testRespawnTick;
 
     public int EntityCount => entities.Count;
+    public event Action<int, NetworkEntityType, Vector3> EntityDied;
 
     public void Initialize(GameNetworkServer networkServer)
     {
@@ -44,13 +44,11 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         scenePrepared = true;
-        GrayboxPlayerController playerTemplate = FindObjectOfType<GrayboxPlayerController>(true);
-        testOrigin = playerTemplate != null ? playerTemplate.transform.position + Vector3.forward * 4f : Vector3.forward * 4f;
-        SpawnTestEnemy();
+        NetworkLog.Info("服务器网络实体注册表已准备，实体将由 ServerBattleFlow 创建。");
     }
 
     public int Register(GameObject gameObject, NetworkEntityType entityType, int prefabId, int ownerPlayerId,
-        float currentHealth, float maxHealth)
+        float currentHealth, float maxHealth, Vector3 velocity = default, uint spawnTick = 0)
     {
         int entityId = AllocateEntityId();
 
@@ -68,63 +66,80 @@ public sealed class ServerEntityRegistry : MonoBehaviour
 
         NetworkEntity networkEntity = gameObject.GetComponent<NetworkEntity>() ?? gameObject.AddComponent<NetworkEntity>();
         networkEntity.Configure(entityId, entityType, prefabId, ownerPlayerId, true);
-        ServerEntityRecord record = new ServerEntityRecord(networkEntity, currentHealth, maxHealth);
+        ServerEntityRecord record = new ServerEntityRecord(networkEntity, currentHealth, maxHealth, velocity, spawnTick);
         entities.Add(entityId, record);
         server.BroadcastEntitySpawn(CreateSpawnMessage(record));
         NetworkLog.Info($"服务器注册网络实体：EntityId {entityId}，Type {entityType}，PrefabId {prefabId}。");
         return entityId;
     }
 
-    /// <summary>
-    /// 根据服务器保存的玩家位置和朝向执行一次权威射线命中。客户端没有传入伤害值或目标的机会。
-    /// </summary>
-    public bool TryApplyPlayerFire(int sourceEntityId, Vector3 origin, Vector3 direction, float range, float damage)
+    public bool TryFindProjectileTarget(Vector3 start, Vector3 end, float projectileRadius, int ownerEntityId,
+        out int targetEntityId, out Vector3 hitPoint, out float hitDistance)
     {
-        if (sourceEntityId <= 0 || direction.sqrMagnitude < 0.0001f || range <= 0f || damage <= 0f)
+        targetEntityId = 0;
+        hitPoint = end;
+        hitDistance = float.PositiveInfinity;
+        Vector3 segment = end - start;
+        float segmentLengthSquared = segment.sqrMagnitude;
+
+        if (segmentLengthSquared < 0.000001f)
         {
             return false;
         }
 
-        direction.Normalize();
-        ServerEntityRecord closestTarget = null;
-        float closestDistance = float.PositiveInfinity;
+        float segmentLength = Mathf.Sqrt(segmentLengthSquared);
+        float combinedRadius = EnemyHitRadius + Mathf.Max(0f, projectileRadius);
+        float combinedRadiusSquared = combinedRadius * combinedRadius;
 
         foreach (ServerEntityRecord record in entities.Values)
         {
-            if (record.Entity == null || record.CurrentHealth <= 0f ||
+            if (record.Entity == null || record.Entity.EntityId == ownerEntityId || record.CurrentHealth <= 0f ||
                 (record.Entity.EntityType != NetworkEntityType.Enemy && record.Entity.EntityType != NetworkEntityType.Boss))
             {
                 continue;
             }
 
-            Vector3 targetPoint = record.Entity.transform.position + Vector3.up;
-            Vector3 toTarget = targetPoint - origin;
-            float distanceAlongRay = Vector3.Dot(toTarget, direction);
+            Vector3 targetCenter = record.Entity.transform.position + Vector3.up;
+            float segmentFraction = Mathf.Clamp01(Vector3.Dot(targetCenter - start, segment) / segmentLengthSquared);
+            Vector3 closestPoint = start + segment * segmentFraction;
 
-            if (distanceAlongRay < 0f || distanceAlongRay > range)
+            if ((targetCenter - closestPoint).sqrMagnitude > combinedRadiusSquared)
             {
                 continue;
             }
 
-            float perpendicularDistanceSquared = (toTarget - direction * distanceAlongRay).sqrMagnitude;
+            float distance = segmentFraction * segmentLength;
 
-            if (perpendicularDistanceSquared > EnemyHitRadius * EnemyHitRadius || distanceAlongRay >= closestDistance)
+            if (distance >= hitDistance)
             {
                 continue;
             }
 
-            closestTarget = record;
-            closestDistance = distanceAlongRay;
+            targetEntityId = record.Entity.EntityId;
+            hitPoint = closestPoint;
+            hitDistance = distance;
         }
 
-        if (closestTarget == null)
+        return targetEntityId > 0;
+    }
+
+    public bool ApplyProjectileDamage(int sourceEntityId, int targetEntityId, float damage)
+    {
+        if (!entities.TryGetValue(targetEntityId, out ServerEntityRecord target) || target.CurrentHealth <= 0f)
         {
-            NetworkLog.Info($"服务器判定 Entity {sourceEntityId} 射击未命中。");
             return false;
         }
 
-        ApplyAuthoritativeDamage(sourceEntityId, closestTarget, damage);
+        ApplyAuthoritativeDamage(sourceEntityId, target, damage);
         return true;
+    }
+
+    public void SetEntityVelocity(int entityId, Vector3 velocity)
+    {
+        if (entities.TryGetValue(entityId, out ServerEntityRecord record))
+        {
+            record.Velocity = velocity;
+        }
     }
 
     public bool Despawn(int entityId, EntityDespawnReason reason)
@@ -164,6 +179,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
                 PrefabId = record.Entity.PrefabId,
                 OwnerPlayerId = record.Entity.OwnerPlayerId,
                 Position = entityTransform.position,
+                Velocity = record.Velocity,
                 RotationY = entityTransform.eulerAngles.y,
                 CurrentHealth = record.CurrentHealth,
                 MaxHealth = record.MaxHealth,
@@ -209,32 +225,14 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             return;
         }
 
-        if (testEnemy != null && testEnemy.Entity != null)
+        foreach (ServerEntityRecord record in entities.Values)
         {
-            UpdateEnemyAI(testEnemy, tickDeltaTime);
+            if (record.Entity != null && (record.Entity.EntityType == NetworkEntityType.Enemy ||
+                record.Entity.EntityType == NetworkEntityType.Boss))
+            {
+                UpdateEnemyAI(record, tickDeltaTime);
+            }
         }
-
-        if (testEnemy != null || server.ConnectedPlayerCount == 0 || serverTick < testRespawnTick)
-        {
-            return;
-        }
-
-        SpawnTestEnemy();
-    }
-
-    private void SpawnTestEnemy()
-    {
-        GameObject testObject = new GameObject("ServerTestEnemy");
-        testObject.transform.SetPositionAndRotation(testOrigin, Quaternion.identity);
-        int entityId = Register(testObject, NetworkEntityType.Enemy, NetworkPrefabCatalog.TestEnemyPrefabId, 0, 100f, 100f);
-
-        if (entityId == 0)
-        {
-            Destroy(testObject);
-            return;
-        }
-
-        testEnemy = entities[entityId];
     }
 
     private void UpdateEnemyAI(ServerEntityRecord enemy, float tickDeltaTime)
@@ -256,13 +254,17 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             enemy.Entity.transform.rotation = Quaternion.LookRotation(direction, Vector3.up);
         }
 
-        if (direction.magnitude <= EnemyStoppingDistance)
+        bool isBoss = enemy.Entity.EntityType == NetworkEntityType.Boss;
+        float stoppingDistance = isBoss ? BossStoppingDistance : EnemyStoppingDistance;
+
+        if (direction.magnitude <= stoppingDistance)
         {
             enemy.AnimationState = 0;
             return;
         }
 
-        enemy.Entity.transform.position += direction.normalized * (EnemyMoveSpeed * tickDeltaTime);
+        float moveSpeed = isBoss ? BossMoveSpeed : EnemyMoveSpeed;
+        enemy.Entity.transform.position += direction.normalized * (moveSpeed * tickDeltaTime);
         enemy.AnimationState = 1;
     }
 
@@ -296,6 +298,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         int deadEntityId = target.Entity.EntityId;
+        NetworkEntityType deadEntityType = target.Entity.EntityType;
         server.BroadcastBattleEvent(new BattleEventMessage
         {
             EventType = BattleEventType.EntityDied,
@@ -307,12 +310,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             Position = position
         });
 
-        if (ReferenceEquals(testEnemy, target))
-        {
-            testEnemy = null;
-            testRespawnTick = server.ServerTick + TestRespawnDelayTicks;
-        }
-
+        EntityDied?.Invoke(deadEntityId, deadEntityType, position);
         Despawn(deadEntityId, EntityDespawnReason.Dead);
     }
 
@@ -327,6 +325,8 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             OwnerPlayerId = record.Entity.OwnerPlayerId,
             Position = entityTransform.position,
             Rotation = entityTransform.rotation,
+            Velocity = record.Velocity,
+            SpawnTick = record.SpawnTick,
             CurrentHealth = record.CurrentHealth,
             MaxHealth = record.MaxHealth
         };
@@ -334,16 +334,20 @@ public sealed class ServerEntityRegistry : MonoBehaviour
 
     private sealed class ServerEntityRecord
     {
-        public ServerEntityRecord(NetworkEntity entity, float currentHealth, float maxHealth)
+        public ServerEntityRecord(NetworkEntity entity, float currentHealth, float maxHealth, Vector3 velocity, uint spawnTick)
         {
             Entity = entity;
             CurrentHealth = currentHealth;
             MaxHealth = maxHealth;
+            Velocity = velocity;
+            SpawnTick = spawnTick;
         }
 
         public NetworkEntity Entity { get; }
         public float CurrentHealth { get; set; }
         public float MaxHealth { get; }
+        public Vector3 Velocity;
+        public uint SpawnTick { get; }
         public byte AnimationState;
         public int TargetEntityId;
     }

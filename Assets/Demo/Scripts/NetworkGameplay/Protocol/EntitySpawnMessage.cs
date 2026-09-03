@@ -8,6 +8,8 @@ public sealed class EntitySpawnMessage
     public int OwnerPlayerId;
     public Vector3 Position;
     public Quaternion Rotation;
+    public Vector3 Velocity;
+    public uint SpawnTick;
     public float CurrentHealth;
     public float MaxHealth;
 }

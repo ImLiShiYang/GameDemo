@@ -33,7 +33,8 @@ public sealed class NetworkDebugPanel : MonoBehaviour
             $"MatchId: {NetworkRuntime.MatchId}\n" +
             $"ServerTick: {NetworkRuntime.ServerTick}\n" +
             $"SnapshotTick: {NetworkBootstrap.Instance?.Client?.LastSnapshotTick ?? 0}\n" +
-            $"实体数量: {entityCount}";
+            $"实体数量: {entityCount}\n" +
+            $"战斗阶段: {ResolveBattlePhase()}";
 
         if (!string.IsNullOrEmpty(NetworkLog.LastError))
         {
@@ -41,5 +42,15 @@ public sealed class NetworkDebugPanel : MonoBehaviour
         }
 
         GUI.Box(new Rect(12f, 12f, 390f, 200f), text, style);
+    }
+
+    private static BattlePhase ResolveBattlePhase()
+    {
+        if (NetworkRuntime.IsServer)
+        {
+            return NetworkBootstrap.Instance?.ServerBattle?.State.Phase ?? BattlePhase.WaitingForPlayers;
+        }
+
+        return NetworkBootstrap.Instance?.ClientBattle?.State.Phase ?? BattlePhase.WaitingForPlayers;
     }
 }

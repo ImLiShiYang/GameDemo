@@ -4,13 +4,13 @@ using UnityEngine;
 public sealed class ServerPlayerManager : MonoBehaviour
 {
     private const float PlayerMoveSpeed = 3.2f;
-    private const float FireDamage = 25f;
-    private const float FireRange = 14f;
     private const int FireCooldownTicks = 5;
     private readonly Dictionary<int, ServerPlayer> players = new Dictionary<int, ServerPlayer>(2);
 
     private GameNetworkServer server;
     private ServerEntityRegistry entityRegistry;
+    private ServerProjectileRegistry projectileRegistry;
+    private ServerBattleFlow battleFlow;
     private GameObject playerTemplate;
     private Vector3 spawnOrigin = new Vector3(41.988f, 0.296f, 30.198f);
     private Quaternion spawnRotation = Quaternion.identity;
@@ -47,10 +47,13 @@ public sealed class ServerPlayerManager : MonoBehaviour
         return playerTransform != null;
     }
 
-    public void Initialize(GameNetworkServer networkServer, ServerEntityRegistry serverEntityRegistry)
+    public void Initialize(GameNetworkServer networkServer, ServerEntityRegistry serverEntityRegistry,
+        ServerProjectileRegistry serverProjectileRegistry, ServerBattleFlow serverBattleFlow)
     {
         server = networkServer;
         entityRegistry = serverEntityRegistry;
+        projectileRegistry = serverProjectileRegistry;
+        battleFlow = serverBattleFlow;
         snapshotTickInterval = Mathf.Max(1, NetworkRuntime.DefaultTickRate / NetworkRuntime.DefaultSnapshotRate);
         server.PlayerAuthenticated += HandlePlayerAuthenticated;
         server.PlayerDisconnected += HandlePlayerDisconnected;
@@ -149,8 +152,11 @@ public sealed class ServerPlayerManager : MonoBehaviour
     {
         foreach (ServerPlayer player in players.Values)
         {
-            SimulatePlayer(player, tickDeltaTime);
-            SimulateFire(player, serverTick);
+            if (battleFlow == null || battleFlow.AllowsPlayerActions)
+            {
+                SimulatePlayer(player, tickDeltaTime);
+                SimulateFire(player, serverTick);
+            }
         }
 
         if (serverTick % snapshotTickInterval == 0)
@@ -187,8 +193,8 @@ public sealed class ServerPlayerManager : MonoBehaviour
             return;
         }
 
-        Vector3 origin = player.GameObject.transform.position + Vector3.up;
-        entityRegistry?.TryApplyPlayerFire(player.EntityId, origin, direction.normalized, FireRange, FireDamage);
+        Vector3 origin = player.GameObject.transform.position + Vector3.up + direction.normalized * 0.8f;
+        projectileRegistry?.SpawnPlayerProjectile(player.PlayerId, player.EntityId, origin, direction.normalized);
     }
 
     private static bool IsAlive(ServerPlayer player)
@@ -205,6 +211,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
     private WorldSnapshotMessage BuildSnapshot(uint serverTick)
     {
         WorldSnapshotMessage snapshot = new WorldSnapshotMessage { ServerTick = serverTick };
+        battleFlow?.CopyStateTo(snapshot.Battle, serverTick);
 
         foreach (ServerPlayer player in players.Values)
         {

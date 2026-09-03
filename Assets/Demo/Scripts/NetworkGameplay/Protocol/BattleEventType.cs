@@ -4,5 +4,12 @@
 public enum BattleEventType : byte
 {
     Damage = 1,
-    EntityDied = 2
+    EntityDied = 2,
+    CountdownStarted = 10,
+    WaveStarted = 11,
+    WaveCleared = 12,
+    BossIntroStarted = 13,
+    BossSpawned = 14,
+    BossDied = 15,
+    BattleFinished = 16
 }

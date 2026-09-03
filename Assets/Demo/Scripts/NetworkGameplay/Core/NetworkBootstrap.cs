@@ -49,8 +49,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
     public ServerPlayerManager ServerPlayers { get; private set; }
     // Server 模式下分配通用 EntityId，并负责实体 Spawn、Despawn 和通用快照状态。
     public ServerEntityRegistry ServerEntities { get; private set; }
+    // Server 模式下创建和推进权威子弹，并负责命中、伤害和生命周期。
+    public ServerProjectileRegistry ServerProjectiles { get; private set; }
+    // Server 模式下维护等待、波次、Boss 与结算的权威状态机。
+    public ServerBattleFlow ServerBattle { get; private set; }
     // Client 模式下把服务器快照映射成场景表现对象的组件。
     public ClientEntityRegistry ClientEntities { get; private set; }
+    // Client 模式下把服务器战斗事件映射为提示、音乐和结算界面。
+    public ClientBattlePresentation ClientBattle { get; private set; }
 
     /// <summary>
     /// Unity 在加载首个场景前调用的真正网络入口。
@@ -251,8 +257,14 @@ public sealed class NetworkBootstrap : MonoBehaviour
         // 添加通用网络实体注册表，并优先订阅 Tick，使实体移动先于快照构建执行。
         ServerEntities = gameObject.AddComponent<ServerEntityRegistry>();
         ServerEntities.Initialize(Server);
+        // 战斗状态机只在服务器运行，并显式维护波次生成完成与存活计数。
+        ServerBattle = gameObject.AddComponent<ServerBattleFlow>();
+        ServerBattle.Initialize(Server, ServerEntities);
+        // 子弹注册表在玩家管理器之后订阅 Tick，确保本 Tick 开火后即可推进新子弹。
+        ServerProjectiles = gameObject.AddComponent<ServerProjectileRegistry>();
         // 订阅服务器的认证、输入、断线和 Tick 事件。
-        ServerPlayers.Initialize(Server, ServerEntities);
+        ServerPlayers.Initialize(Server, ServerEntities, ServerProjectiles, ServerBattle);
+        ServerProjectiles.Initialize(Server, ServerEntities);
         // 通用敌人 AI 通过玩家管理器查找最近的存活权威玩家，不在客户端选择目标。
         ServerEntities.SetPlayerManager(ServerPlayers);
         // 开始监听命令行指定端口。
@@ -325,6 +337,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
             DisableAll<GamePlayerAttack>();
             // 禁用单机技能按键读取。
             DisableAll<PlayerSkillInput>();
+            // 网络服务器使用 ServerBattleFlow；禁止场景里的单机 WaveManager/EnemySpawner 同时刷怪。
+            DisableAll<WaveManager>();
+            DisableAll<EnemySpawner>();
             return;
         }
 
@@ -364,6 +379,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
             ServerPlayers?.PrepareScene();
             // 创建服务器权威测试敌人，并开始同步 AI、生命、受击和死亡状态。
             ServerEntities?.PrepareScene();
+            // 捕获战斗出生区域，开始等待两名已认证玩家。
+            ServerBattle?.PrepareScene();
             return;
         }
 
@@ -389,6 +406,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
         // 输入发送器同样挂在 NetworkBootstrap 上；它引用本地玩家 Transform，但不直接移动玩家。
         ClientInputSender inputSender = gameObject.AddComponent<ClientInputSender>();
         inputSender.Initialize(Client, ClientEntities.LocalPlayerTransform);
+        ClientBattle = gameObject.AddComponent<ClientBattlePresentation>();
+        ClientBattle.Initialize(Client);
     }
 
     private static void DisableAll<T>() where T : Behaviour

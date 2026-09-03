@@ -115,6 +115,10 @@ public static class NetworkProtocol
             writer.Write(message.Rotation.y);
             writer.Write(message.Rotation.z);
             writer.Write(message.Rotation.w);
+            writer.Write(message.Velocity.x);
+            writer.Write(message.Velocity.y);
+            writer.Write(message.Velocity.z);
+            writer.Write(message.SpawnTick);
             writer.Write(message.CurrentHealth);
             writer.Write(message.MaxHealth);
         });
@@ -130,6 +134,8 @@ public static class NetworkProtocol
             OwnerPlayerId = reader.ReadInt32(),
             Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
             Rotation = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            Velocity = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            SpawnTick = reader.ReadUInt32(),
             CurrentHealth = reader.ReadSingle(),
             MaxHealth = reader.ReadSingle()
         });
@@ -184,6 +190,8 @@ public static class NetworkProtocol
             writer.Write(message.Position.x);
             writer.Write(message.Position.y);
             writer.Write(message.Position.z);
+            writer.Write((byte)message.Phase);
+            writer.Write(message.CurrentWave);
         });
     }
 
@@ -197,7 +205,9 @@ public static class NetworkProtocol
             Amount = reader.ReadSingle(),
             CurrentHealth = reader.ReadSingle(),
             MaxHealth = reader.ReadSingle(),
-            Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())
+            Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            Phase = (BattlePhase)reader.ReadByte(),
+            CurrentWave = reader.ReadInt32()
         });
         ValidateBattleEvent(message);
         return message;
@@ -208,6 +218,12 @@ public static class NetworkProtocol
         return WritePayload(writer =>
         {
             writer.Write(message.ServerTick);
+            writer.Write((byte)message.Battle.Phase);
+            writer.Write(message.Battle.CurrentWave);
+            writer.Write(message.Battle.AliveEnemyCount);
+            writer.Write(message.Battle.AllEnemiesSpawned);
+            writer.Write(message.Battle.BossEntityId);
+            writer.Write(message.Battle.ServerTick);
             writer.Write((byte)message.Players.Count);
 
             foreach (PlayerNetworkState player in message.Players)
@@ -241,6 +257,9 @@ public static class NetworkProtocol
                 writer.Write(entity.Position.x);
                 writer.Write(entity.Position.y);
                 writer.Write(entity.Position.z);
+                writer.Write(entity.Velocity.x);
+                writer.Write(entity.Velocity.y);
+                writer.Write(entity.Velocity.z);
                 writer.Write(entity.RotationY);
                 writer.Write(entity.CurrentHealth);
                 writer.Write(entity.MaxHealth);
@@ -255,6 +274,13 @@ public static class NetworkProtocol
         return ReadPayload(payload, reader =>
         {
             WorldSnapshotMessage message = new WorldSnapshotMessage { ServerTick = reader.ReadUInt32() };
+            message.Battle.Phase = (BattlePhase)reader.ReadByte();
+            message.Battle.CurrentWave = reader.ReadInt32();
+            message.Battle.AliveEnemyCount = reader.ReadInt32();
+            message.Battle.AllEnemiesSpawned = reader.ReadBoolean();
+            message.Battle.BossEntityId = reader.ReadInt32();
+            message.Battle.ServerTick = reader.ReadUInt32();
+            ValidateBattleState(message.Battle);
             int playerCount = reader.ReadByte();
 
             if (playerCount > 2)
@@ -295,6 +321,7 @@ public static class NetworkProtocol
                     PrefabId = reader.ReadInt32(),
                     OwnerPlayerId = reader.ReadInt32(),
                     Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+                    Velocity = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
                     RotationY = reader.ReadSingle(),
                     CurrentHealth = reader.ReadSingle(),
                     MaxHealth = reader.ReadSingle(),
@@ -398,6 +425,9 @@ public static class NetworkProtocol
         ValidateFinite(message.Rotation.y, "Rotation.y");
         ValidateFinite(message.Rotation.z, "Rotation.z");
         ValidateFinite(message.Rotation.w, "Rotation.w");
+        ValidateFinite(message.Velocity.x, "Velocity.x");
+        ValidateFinite(message.Velocity.y, "Velocity.y");
+        ValidateFinite(message.Velocity.z, "Velocity.z");
         ValidateFinite(message.CurrentHealth, nameof(message.CurrentHealth));
         ValidateFinite(message.MaxHealth, nameof(message.MaxHealth));
 
@@ -413,6 +443,9 @@ public static class NetworkProtocol
         ValidateFinite(entity.Position.x, "Position.x");
         ValidateFinite(entity.Position.y, "Position.y");
         ValidateFinite(entity.Position.z, "Position.z");
+        ValidateFinite(entity.Velocity.x, "Velocity.x");
+        ValidateFinite(entity.Velocity.y, "Velocity.y");
+        ValidateFinite(entity.Velocity.z, "Velocity.z");
         ValidateFinite(entity.RotationY, nameof(entity.RotationY));
         ValidateFinite(entity.CurrentHealth, nameof(entity.CurrentHealth));
         ValidateFinite(entity.MaxHealth, nameof(entity.MaxHealth));
@@ -435,8 +468,18 @@ public static class NetworkProtocol
             throw new InvalidDataException("战斗事件类型无效。");
         }
 
-        ValidateEntityId(message.SourceEntityId);
-        ValidateEntityId(message.TargetEntityId);
+        bool entityEvent = message.EventType == BattleEventType.Damage || message.EventType == BattleEventType.EntityDied ||
+            message.EventType == BattleEventType.BossSpawned || message.EventType == BattleEventType.BossDied;
+
+        if (entityEvent)
+        {
+            ValidateEntityId(message.TargetEntityId);
+        }
+
+        if (message.SourceEntityId < 0 || message.TargetEntityId < 0)
+        {
+            throw new InvalidDataException("战斗事件包含非法 EntityId。");
+        }
         ValidateFinite(message.Amount, nameof(message.Amount));
         ValidateFinite(message.CurrentHealth, nameof(message.CurrentHealth));
         ValidateFinite(message.MaxHealth, nameof(message.MaxHealth));
@@ -448,6 +491,20 @@ public static class NetworkProtocol
             message.CurrentHealth > message.MaxHealth)
         {
             throw new InvalidDataException("战斗事件包含非法伤害或生命值。");
+        }
+
+        if (!Enum.IsDefined(typeof(BattlePhase), message.Phase) || message.CurrentWave < 0)
+        {
+            throw new InvalidDataException("战斗事件包含非法阶段或波次。");
+        }
+    }
+
+    private static void ValidateBattleState(BattleNetworkState state)
+    {
+        if (state == null || !Enum.IsDefined(typeof(BattlePhase), state.Phase) || state.CurrentWave < 0 ||
+            state.AliveEnemyCount < 0 || state.BossEntityId < 0)
+        {
+            throw new InvalidDataException("世界快照包含非法战斗状态。");
         }
     }
 

@@ -3,5 +3,7 @@ public enum EntityDespawnReason : byte
     Dead = 1,
     Disconnected = 2,
     SceneChanged = 3,
-    BattleFinished = 4
+    BattleFinished = 4,
+    ProjectileHit = 5,
+    ProjectileExpired = 6
 }

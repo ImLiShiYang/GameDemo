@@ -12,4 +12,6 @@ public sealed class BattleEventMessage
     public float CurrentHealth;
     public float MaxHealth;
     public Vector3 Position;
+    public BattlePhase Phase;
+    public int CurrentWave;
 }

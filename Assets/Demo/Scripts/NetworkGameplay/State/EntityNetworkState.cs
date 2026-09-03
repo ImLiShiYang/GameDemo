@@ -10,6 +10,7 @@ public sealed class EntityNetworkState
     public int PrefabId;
     public int OwnerPlayerId;
     public Vector3 Position;
+    public Vector3 Velocity;
     public float RotationY;
     public float CurrentHealth;
     public float MaxHealth;

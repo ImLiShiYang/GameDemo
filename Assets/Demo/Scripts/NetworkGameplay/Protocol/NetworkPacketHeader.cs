@@ -1,7 +1,7 @@
 public struct NetworkPacketHeader
 {
     public const uint ExpectedMagic = 0x47444D4F;
-    public const ushort CurrentProtocolVersion = 3;
+    public const ushort CurrentProtocolVersion = 5;
     public const int SerializedSize = 28;
     public const int MaximumPayloadLength = 1024 * 1024;
 

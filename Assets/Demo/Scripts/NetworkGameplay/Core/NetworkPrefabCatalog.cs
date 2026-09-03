@@ -3,12 +3,14 @@ using UnityEngine;
 
 /// <summary>
 /// 把服务器下发的稳定 PrefabId 映射为客户端表现对象池。
-/// 第三天先使用固定映射：1 为玩家，10 为红色胶囊测试敌人；后续可把 10 替换成正式敌人 Prefab。
+/// 固定映射：1 为玩家，10 为普通敌人，100 为 Boss，200 为客户端纯表现子弹。
 /// </summary>
 public sealed class NetworkPrefabCatalog : MonoBehaviour
 {
     public const int PlayerPrefabId = 1;
     public const int TestEnemyPrefabId = 10;
+    public const int BossPrefabId = 100;
+    public const int ProjectilePrefabId = 200;
 
     private readonly Dictionary<int, GameObjectPool> pools = new Dictionary<int, GameObjectPool>();
     private Transform poolRoot;
@@ -25,6 +27,8 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
         poolRoot = new GameObject("Network Entity Pool").transform;
         poolRoot.SetParent(transform, false);
         RegisterRuntimeTestEnemy();
+        RegisterRuntimeBoss();
+        RegisterRuntimeProjectile();
     }
 
     public GameObject Spawn(EntitySpawnMessage message)
@@ -81,5 +85,59 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
         Transform storageRoot = new GameObject("Prefab 10 - Test Enemy").transform;
         storageRoot.SetParent(poolRoot, false);
         pools.Add(TestEnemyPrefabId, new GameObjectPool(template, storageRoot, 2, 16));
+    }
+
+    private void RegisterRuntimeProjectile()
+    {
+        GameObject template = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        template.name = "NetworkProjectile_Prefab200";
+        template.transform.SetParent(poolRoot, false);
+        template.transform.localScale = Vector3.one * 0.22f;
+
+        Renderer visual = template.GetComponent<Renderer>();
+
+        if (visual != null)
+        {
+            visual.material.color = new Color(1f, 0.65f, 0.08f, 1f);
+        }
+
+        Collider collider = template.GetComponent<Collider>();
+
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+
+        template.SetActive(false);
+        Transform storageRoot = new GameObject("Prefab 200 - Projectile").transform;
+        storageRoot.SetParent(poolRoot, false);
+        pools.Add(ProjectilePrefabId, new GameObjectPool(template, storageRoot, 8, 64));
+    }
+
+    private void RegisterRuntimeBoss()
+    {
+        GameObject template = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        template.name = "NetworkBoss_Prefab100";
+        template.transform.SetParent(poolRoot, false);
+        template.transform.localScale = new Vector3(1.8f, 2.2f, 1.8f);
+
+        Renderer visual = template.GetComponent<Renderer>();
+
+        if (visual != null)
+        {
+            visual.material.color = new Color(0.42f, 0.08f, 0.72f, 1f);
+        }
+
+        Collider collider = template.GetComponent<Collider>();
+
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+
+        template.SetActive(false);
+        Transform storageRoot = new GameObject("Prefab 100 - Boss").transform;
+        storageRoot.SetParent(poolRoot, false);
+        pools.Add(BossPrefabId, new GameObjectPool(template, storageRoot, 1, 2));
     }
 }
