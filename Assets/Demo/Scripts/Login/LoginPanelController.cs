@@ -151,6 +151,20 @@ public sealed class LoginPanelController : MonoBehaviour
             // LoginPanel 销毁时 CancellationToken 会取消仍在执行的网络请求。
             PlayerProfile player = await AuthenticateAsync(account, password, lifetimeCancellation.Token);
 
+            if (NetworkRuntime.IsClient)
+            {
+                NetworkBootstrap bootstrap = NetworkBootstrap.Instance;
+
+                if (bootstrap == null)
+                {
+                    throw new InvalidOperationException("Client 模式没有找到 NetworkBootstrap。");
+                }
+
+                SetStatus($"登录成功，欢迎 {player.nickname}（Lv.{player.level}），正在连接游戏服务器...");
+                await bootstrap.ConnectAuthenticatedClientAsync(player.nickname, lifetimeCancellation.Token);
+                SetStatus("游戏服务器验证成功，正在加载主场景...");
+            }
+
             // 登录和玩家数据均成功后，获取负责加载 Addressable 主场景的组件。
             AddressableSceneLoader activeSceneLoader = ResolveSceneLoader();
 
@@ -159,7 +173,10 @@ public sealed class LoginPanelController : MonoBehaviour
                 throw new InvalidOperationException("LoginPanelController 没有找到可用的 AddressableSceneLoader。");
             }
 
-            SetStatus($"登录成功，欢迎 {player.nickname}（Lv.{player.level}），正在加载主界面...");
+            if (!NetworkRuntime.IsClient)
+            {
+                SetStatus($"登录成功，欢迎 {player.nickname}（Lv.{player.level}），正在加载主界面...");
+            }
 
             // 开发测试开关可以故意使用不存在的地址，验证场景加载失败的异常处理。
             string targetAddress = simulateSceneLoadFailure ? "Scene/MissingForFailureTest" : mainSceneAddress;
@@ -171,7 +188,10 @@ public sealed class LoginPanelController : MonoBehaviour
             // 场景销毁导致的主动取消属于正常生命周期，不需要显示错误或输出警告。
             if (this != null && exception.Kind != NetworkErrorKind.Cancelled)
             {
-                SetStatus(GetLoginErrorMessage(exception));
+                string message = NetworkRuntime.IsClient && GameSession.IsAuthenticated
+                    ? exception.Message
+                    : GetLoginErrorMessage(exception);
+                SetStatus(message);
                 Debug.LogWarning($"登录网络请求失败：{exception.Message}\n{exception.ResponseText}", this);
             }
         }

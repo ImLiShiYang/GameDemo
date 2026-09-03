@@ -1,0 +1,85 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+/// <summary>
+/// 把服务器下发的稳定 PrefabId 映射为客户端表现对象池。
+/// 第三天先使用固定映射：1 为玩家，10 为红色胶囊测试敌人；后续可把 10 替换成正式敌人 Prefab。
+/// </summary>
+public sealed class NetworkPrefabCatalog : MonoBehaviour
+{
+    public const int PlayerPrefabId = 1;
+    public const int TestEnemyPrefabId = 10;
+
+    private readonly Dictionary<int, GameObjectPool> pools = new Dictionary<int, GameObjectPool>();
+    private Transform poolRoot;
+    private bool initialized;
+
+    public void Initialize()
+    {
+        if (initialized)
+        {
+            return;
+        }
+
+        initialized = true;
+        poolRoot = new GameObject("Network Entity Pool").transform;
+        poolRoot.SetParent(transform, false);
+        RegisterRuntimeTestEnemy();
+    }
+
+    public GameObject Spawn(EntitySpawnMessage message)
+    {
+        if (!pools.TryGetValue(message.PrefabId, out GameObjectPool pool))
+        {
+            NetworkLog.Error($"客户端没有配置 PrefabId {message.PrefabId}，EntityId {message.EntityId} 的表现对象创建失败。");
+            return null;
+        }
+
+        return pool.Get(message.Position, message.Rotation);
+    }
+
+    public void Release(GameObject instance)
+    {
+        if (instance == null)
+        {
+            return;
+        }
+
+        PooledObject pooledObject = instance.GetComponent<PooledObject>();
+
+        if (pooledObject != null)
+        {
+            pooledObject.Release();
+            return;
+        }
+
+        Destroy(instance);
+    }
+
+    private void RegisterRuntimeTestEnemy()
+    {
+        GameObject template = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        template.name = "NetworkTestEnemy_Prefab10";
+        template.transform.SetParent(poolRoot, false);
+        template.transform.localScale = new Vector3(0.9f, 1.2f, 0.9f);
+
+        Renderer visual = template.GetComponent<Renderer>();
+
+        if (visual != null)
+        {
+            visual.material.color = new Color(0.85f, 0.12f, 0.12f, 1f);
+        }
+
+        Collider collider = template.GetComponent<Collider>();
+
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+
+        template.SetActive(false);
+        Transform storageRoot = new GameObject("Prefab 10 - Test Enemy").transform;
+        storageRoot.SetParent(poolRoot, false);
+        pools.Add(TestEnemyPrefabId, new GameObjectPool(template, storageRoot, 2, 16));
+    }
+}
