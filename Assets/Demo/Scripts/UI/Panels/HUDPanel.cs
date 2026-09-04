@@ -201,6 +201,14 @@ public class HUDPanel : UIBase
 
         SetSkillCooldownText(primarySkillCooldownText, primaryRemaining);
         SetSkillCooldownText(secondarySkillCooldownText, secondaryRemaining);
+        if (NetworkRuntime.IsClient)
+        {
+            SetCooldown(HUDSkillSlot.PrimarySkill, skillManager.GetCooldownNormalized(PlayerSkillInput.PrimarySkillId));
+            SetCooldown(HUDSkillSlot.SecondarySkill, skillManager.GetCooldownNormalized(PlayerSkillInput.SecondarySkillId));
+            ClientPlayerPrediction prediction = NetworkBootstrap.Instance?.ClientPrediction;
+            if (prediction != null)
+                SetCooldown(HUDSkillSlot.Roll, Mathf.Clamp01(prediction.Action.RollCooldownTicks / (float)PlayerMovementSimulation.RollCooldownTicks));
+        }
     }
     
     private void SetSkillCooldownText(TMP_Text target, float remaining)
@@ -341,6 +349,7 @@ public class HUDPanel : UIBase
         if (playerHealth != null)
         {
             playerHealth.Damaged += HandlePlayerDamaged;
+            playerHealth.NetworkStateChanged += RefreshPlayerHealth;
             playerHealth.Died += HandlePlayerDied;
             playerHealth.ShieldChanged += HandleShieldChanged;
         }
@@ -364,6 +373,7 @@ public class HUDPanel : UIBase
         if (playerHealth != null)
         {
             playerHealth.Damaged -= HandlePlayerDamaged;
+            playerHealth.NetworkStateChanged -= RefreshPlayerHealth;
             playerHealth.Died -= HandlePlayerDied;
             playerHealth.ShieldChanged -= HandleShieldChanged;
         }

@@ -38,6 +38,21 @@ public class GamePlayerAttack : MonoBehaviour
 
     private AudioSource shotAudioSource;
 
+    public float NetworkDamage => damage;
+    public float NetworkAttackInterval => attackInterval;
+    public float NetworkProjectileSpeed => projectilePrefab != null ? projectilePrefab.NetworkSpeed : 15f;
+    public float NetworkProjectileLifetime => projectilePrefab != null ? projectilePrefab.NetworkLifetime : 3f;
+    public Vector3 NetworkMuzzlePosition => muzzle != null ? muzzle.position : transform.position + Vector3.up;
+
+    public void PlayNetworkShot()
+    {
+        if (!NetworkRuntime.IsClient) return;
+        if (shotAudioSource == null) InitializeShotAudio();
+        shotAudioSource.enabled = true;
+        PlayMuzzleFlash();
+        PlayShotSound();
+    }
+
 
     private void Awake()
     {
@@ -77,6 +92,7 @@ public class GamePlayerAttack : MonoBehaviour
     /// </summary>
     public void TryAttack(Vector3 aimPoint)
     {
+        if (!NetworkRuntime.IsOffline) return;
         if (Time.timeScale <= 0f)
         {
             return;

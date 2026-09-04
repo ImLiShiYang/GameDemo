@@ -74,7 +74,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
     }
 
     public bool TryFindProjectileTarget(Vector3 start, Vector3 end, float projectileRadius, int ownerEntityId,
-        out int targetEntityId, out Vector3 hitPoint, out float hitDistance)
+        out int targetEntityId, out Vector3 hitPoint, out float hitDistance, HashSet<int> ignoredTargets = null)
     {
         targetEntityId = 0;
         hitPoint = end;
@@ -94,6 +94,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         foreach (ServerEntityRecord record in entities.Values)
         {
             if (record.Entity == null || record.Entity.EntityId == ownerEntityId || record.CurrentHealth <= 0f ||
+                (ignoredTargets != null && ignoredTargets.Contains(record.Entity.EntityId)) ||
                 (record.Entity.EntityType != NetworkEntityType.Enemy && record.Entity.EntityType != NetworkEntityType.Boss))
             {
                 continue;
@@ -132,6 +133,28 @@ public sealed class ServerEntityRegistry : MonoBehaviour
 
         ApplyAuthoritativeDamage(sourceEntityId, target, damage);
         return true;
+    }
+
+    public void ApplySkillDamage(int sourceEntityId, Vector3 origin, Vector3 direction, float range, float damage, int interruptPower, bool beam)
+    {
+        // 收集后再判伤，死亡回调可能删除实体，不能在遍历字典时修改字典。
+        List<int> targets = new List<int>();
+        Vector3 end = origin + direction.normalized * range;
+        foreach (ServerEntityRecord target in entities.Values)
+        {
+            if (target.Entity == null || target.CurrentHealth <= 0f ||
+                (target.Entity.EntityType != NetworkEntityType.Enemy && target.Entity.EntityType != NetworkEntityType.Boss)) continue;
+            Vector3 center = target.Entity.transform.position + Vector3.up;
+            Vector3 closest = beam ? origin + (end - origin) * Mathf.Clamp01(Vector3.Dot(center - origin, end - origin) / Mathf.Max(0.001f, range * range)) : origin;
+            float radius = beam ? EnemyHitRadius : range;
+            if ((center - closest).sqrMagnitude <= radius * radius) targets.Add(target.Entity.EntityId);
+        }
+        foreach (int id in targets)
+        {
+            if (!entities.TryGetValue(id, out ServerEntityRecord target)) continue;
+            if (interruptPower > 0) target.InterruptedUntilTick = server.ServerTick + (uint)(interruptPower * 4);
+            ApplyAuthoritativeDamage(sourceEntityId, target, damage);
+        }
     }
 
     public void SetEntityVelocity(int entityId, Vector3 velocity)
@@ -237,6 +260,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
 
     private void UpdateEnemyAI(ServerEntityRecord enemy, float tickDeltaTime)
     {
+        if (server.ServerTick < enemy.InterruptedUntilTick) { enemy.AnimationState = 2; return; }
         if (playerManager == null || !playerManager.TryGetClosestAlivePlayer(enemy.Entity.transform.position,
                 out Transform target, out int targetEntityId))
         {
@@ -350,5 +374,6 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         public uint SpawnTick { get; }
         public byte AnimationState;
         public int TargetEntityId;
+        public uint InterruptedUntilTick;
     }
 }

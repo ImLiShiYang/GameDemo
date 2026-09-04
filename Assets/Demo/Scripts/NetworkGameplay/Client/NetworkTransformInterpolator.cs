@@ -1,5 +1,6 @@
 using UnityEngine;
 
+[DefaultExecutionOrder(-100)]
 public sealed class NetworkTransformInterpolator : MonoBehaviour
 {
     private static readonly int MoveXHash = Animator.StringToHash("MoveX");
@@ -93,6 +94,9 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
 
     private void ApplyAnimation(float moveSpeed)
     {
+        GrayboxPlayerController playerView = GetComponent<GrayboxPlayerController>();
+        if (playerView != null && playerView.IsNetworkView) 
+            return;
         if (animator != null)
         {
             float normalizedSpeed = moveSpeed > 0.05f ? 1f : 0f;

@@ -40,7 +40,7 @@ public class SkillManager : MonoBehaviour
         }
     }
     
-    private sealed class SkillRuntimeConfig
+    public sealed class SkillRuntimeConfig
     {
         public string Id;
         public string DisplayName;
@@ -153,6 +153,7 @@ public class SkillManager : MonoBehaviour
     
     public void CastSkill(string skillId)
     {
+        if (!NetworkRuntime.IsOffline) return;
         if (string.IsNullOrWhiteSpace(skillId))
         {
             Debug.LogError(
@@ -205,7 +206,7 @@ public class SkillManager : MonoBehaviour
         );
     }
     
-    private bool TryGetSkillConfig(
+    public bool TryGetSkillConfig(
         string skillId,
         out SkillRuntimeConfig config)
     {
@@ -407,7 +408,8 @@ public class SkillManager : MonoBehaviour
             rotation
         );
 
-        Destroy(effect, piercingBeamEffectLifeTime);
+        if (NetworkRuntime.IsClient) StartCoroutine(ReleaseNetworkWarning(effect, piercingBeamEffectLifeTime));
+        else Destroy(effect, piercingBeamEffectLifeTime);
     }
     
     private IEnumerator ExecuteShockWaveRoutine(
@@ -635,7 +637,7 @@ public class SkillManager : MonoBehaviour
 
         return Mathf.Max(
             0f,
-            nextCastTime - Time.time
+            nextCastTime - (NetworkRuntime.IsClient ? Time.unscaledTime : Time.time)
         );
     }
     
@@ -672,6 +674,39 @@ public class SkillManager : MonoBehaviour
         }
 
         return skillId;
+    }
+
+    public void ApplyNetworkCooldowns(float primary, float secondary)
+    {
+        ApplyNetworkCooldown(PlayerSkillInput.PrimarySkillId, primary);
+        ApplyNetworkCooldown(PlayerSkillInput.SecondarySkillId, secondary);
+    }
+
+    private void ApplyNetworkCooldown(string id, float remaining)
+    {
+        if (!cooldownDurations.ContainsKey(id) && TryGetSkillConfig(id, out SkillRuntimeConfig config))
+            cooldownDurations[id] = config.Cooldown;
+        nextCastTimes[id] = Time.unscaledTime + Mathf.Max(0f, remaining);
+    }
+
+    public void PlayNetworkSkill(BattleEventMessage message, Transform caster)
+    {
+        if (!NetworkRuntime.IsClient || caster == null) return;
+        if (message.SkillSlot == 2)
+        {
+            SpawnPiercingBeamEffect(message.Position, message.Direction, message.Range);
+            return;
+        }
+        if (shockWaveWarningPrefab == null) return;
+        GameObject warning = Instantiate(shockWaveWarningPrefab, caster.position, Quaternion.identity, caster);
+        warning.transform.localScale = new Vector3(message.Range * 2f, message.Range * 2f, 1f);
+        StartCoroutine(ReleaseNetworkWarning(warning, message.Duration));
+    }
+
+    private IEnumerator ReleaseNetworkWarning(GameObject warning, float duration)
+    {
+        yield return new WaitForSecondsRealtime(Mathf.Max(0.05f, duration));
+        if (warning != null) Destroy(warning);
     }
     
 }

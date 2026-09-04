@@ -6,10 +6,7 @@ using UnityEngine;
 /// </summary>
 public sealed class ServerProjectileRegistry : MonoBehaviour
 {
-    private const float ProjectileSpeed = 18f;
-    private const float ProjectileDamage = 25f;
     private const float ProjectileRadius = 0.12f;
-    private const int ProjectileLifetimeTicks = NetworkRuntime.DefaultTickRate * 3;
 
     private readonly Dictionary<int, ServerProjectile> projectiles = new Dictionary<int, ServerProjectile>();
     private readonly List<PendingDespawn> pendingDespawns = new List<PendingDespawn>();
@@ -27,7 +24,8 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         server.ServerTicked += HandleServerTick;
     }
 
-    public int SpawnPlayerProjectile(int ownerPlayerId, int ownerEntityId, Vector3 origin, Vector3 direction)
+    public int SpawnPlayerProjectile(int ownerPlayerId, int ownerEntityId, Vector3 origin, Vector3 direction,
+        float damage = 10f, int pierceCount = 0, float speed = 15f, float lifetime = 3f)
     {
         if (direction.sqrMagnitude < 0.0001f)
         {
@@ -35,7 +33,7 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         }
 
         direction.Normalize();
-        Vector3 velocity = direction * ProjectileSpeed;
+        Vector3 velocity = direction * Mathf.Max(0.1f, speed);
         GameObject projectileObject = new GameObject($"ServerProjectile_Player{ownerPlayerId}");
         projectileObject.transform.SetPositionAndRotation(origin, Quaternion.LookRotation(direction, Vector3.up));
         int entityId = entityRegistry.Register(projectileObject, NetworkEntityType.Projectile,
@@ -53,7 +51,9 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
             SourceEntityId = ownerEntityId,
             GameObject = projectileObject,
             Velocity = velocity,
-            ExpireTick = server.ServerTick + ProjectileLifetimeTicks
+            ExpireTick = server.ServerTick + (uint)Mathf.Max(1, Mathf.CeilToInt(lifetime * NetworkRuntime.DefaultTickRate)),
+            Damage = Mathf.Max(0f, damage),
+            RemainingPierces = Mathf.Clamp(pierceCount, 0, 32)
         });
         NetworkLog.Info($"服务器生成权威子弹：EntityId {entityId}，Owner Player {ownerPlayerId}，Velocity {velocity}。");
         return entityId;
@@ -87,21 +87,24 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
 
             Vector3 start = projectile.GameObject.transform.position;
             Vector3 end = start + projectile.Velocity * tickDeltaTime;
-            bool entityHit = entityRegistry.TryFindProjectileTarget(start, end, ProjectileRadius,
-                projectile.SourceEntityId, out int targetEntityId, out Vector3 entityHitPoint, out float entityHitDistance);
             bool worldHit = TryFindWorldHit(start, end, out Vector3 worldHitPoint, out float worldHitDistance);
-
-            if (worldHit && (!entityHit || worldHitDistance < entityHitDistance))
+            bool consumed = false;
+            while (entityRegistry.TryFindProjectileTarget(start, end, ProjectileRadius, projectile.SourceEntityId,
+                out int targetEntityId, out Vector3 entityHitPoint, out float entityHitDistance, projectile.HitTargets))
             {
-                projectile.GameObject.transform.position = worldHitPoint;
-                pendingDespawns.Add(new PendingDespawn(projectile.EntityId, EntityDespawnReason.ProjectileHit));
-                continue;
+                if (worldHit && worldHitDistance < entityHitDistance) break;
+                projectile.HitTargets.Add(targetEntityId);
+                entityRegistry.ApplyProjectileDamage(projectile.SourceEntityId, targetEntityId, projectile.Damage);
+                if (projectile.RemainingPierces-- <= 0)
+                {
+                    projectile.GameObject.transform.position = entityHitPoint;
+                    consumed = true;
+                    break;
+                }
             }
-
-            if (entityHit)
+            if (worldHit || consumed)
             {
-                projectile.GameObject.transform.position = entityHitPoint;
-                entityRegistry.ApplyProjectileDamage(projectile.SourceEntityId, targetEntityId, ProjectileDamage);
+                if (!consumed) projectile.GameObject.transform.position = worldHitPoint;
                 pendingDespawns.Add(new PendingDespawn(projectile.EntityId, EntityDespawnReason.ProjectileHit));
                 continue;
             }
@@ -155,6 +158,9 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         public GameObject GameObject;
         public Vector3 Velocity;
         public uint ExpireTick;
+        public float Damage;
+        public int RemainingPierces;
+        public readonly HashSet<int> HitTargets = new HashSet<int>();
     }
 
     private readonly struct PendingDespawn

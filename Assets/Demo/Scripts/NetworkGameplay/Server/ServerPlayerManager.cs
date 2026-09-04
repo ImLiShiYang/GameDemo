@@ -3,7 +3,6 @@ using UnityEngine;
 
 public sealed class ServerPlayerManager : MonoBehaviour
 {
-    private const int FireCooldownTicks = 5;
     private const int MaxPendingInputs = 128;
     private const int InputHoldTicks = 4;
     private readonly Dictionary<int, ServerPlayer> players = new Dictionary<int, ServerPlayer>(2);
@@ -155,7 +154,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
             Vertical = Mathf.Clamp(input.Vertical, -1f, 1f),
             AimX = Mathf.Clamp(input.AimX, -1f, 1f),
             AimZ = Mathf.Clamp(input.AimZ, -1f, 1f),
-            Buttons = input.Buttons & (ClientInputButtons.Fire | ClientInputButtons.Roll | ClientInputButtons.Skill1 | ClientInputButtons.Interact)
+            Buttons = input.Buttons & (ClientInputButtons.Fire | ClientInputButtons.Roll | ClientInputButtons.Skill1 | ClientInputButtons.Skill2 | ClientInputButtons.Interact)
         };
         player.LastReceivedInputSequence = input.Sequence;
         player.PendingInputs.Enqueue(sanitizedInput);
@@ -166,17 +165,27 @@ public sealed class ServerPlayerManager : MonoBehaviour
         foreach (ServerPlayer player in players.Values)
         {
             ConsumeNextInput(player, serverTick);
-            bool actionsAllowed = battleFlow == null || battleFlow.AllowsPlayerActions;
+            bool actionsAllowed = IsAlive(player) && (battleFlow == null || battleFlow.AllowsPlayerActions);
+            SimulatePlayer(player, actionsAllowed);
 
-            if (actionsAllowed)
+            if (actionsAllowed && !player.Action.IsRolling && player.Action.HitStunTicks == 0)
             {
-                SimulatePlayer(player);
                 SimulateFire(player, serverTick);
+                TryCastSkill(player, serverTick, 1);
+                TryCastSkill(player, serverTick, 2);
             }
             else
             {
                 player.MoveInput = Vector2.zero;
                 player.Buttons = ClientInputButtons.None;
+            }
+            if (!IsAlive(player)) player.PendingShockWave = null;
+            if (player.PendingShockWave != null && serverTick >= player.ShockWaveImpactTick)
+            {
+                SkillManager.SkillRuntimeConfig config = player.PendingShockWave;
+                player.PendingShockWave = null;
+                if (actionsAllowed) entityRegistry.ApplySkillDamage(player.EntityId, player.GameObject.transform.position,
+                    player.GameObject.transform.forward, config.Range, config.Damage, config.InterruptPower, false);
             }
         }
 
@@ -188,7 +197,8 @@ public sealed class ServerPlayerManager : MonoBehaviour
 
     private static void ConsumeNextInput(ServerPlayer player, uint serverTick)
     {
-        player.Buttons = ClientInputButtons.None;
+        // Fire 是持续状态；翻滚和技能是单次按下，空 Tick 不能重复执行。
+        player.Buttons &= ClientInputButtons.Fire;
 
         if (player.PendingInputs.Count > 0)
         {
@@ -202,14 +212,20 @@ public sealed class ServerPlayerManager : MonoBehaviour
         else if (serverTick - player.LastConsumedInputTick > InputHoldTicks)
         {
             player.MoveInput = Vector2.zero;
+            player.Buttons = ClientInputButtons.None;
         }
     }
 
-    private static void SimulatePlayer(ServerPlayer player)
+    private static void SimulatePlayer(ServerPlayer player, bool actionsAllowed)
     {
         Vector3 position = player.GameObject.transform.position;
         float rotationY = player.GameObject.transform.eulerAngles.y;
-        PlayerMovementSimulation.Step(ref position, ref rotationY, player.MoveInput, player.AimInput);
+        Vector3 previousPosition = position;
+        GrayboxPlayerController controller = player.GameObject.GetComponent<GrayboxPlayerController>();
+        PlayerMovementSimulation.Step(ref position, ref rotationY, ref player.Action, player.MoveInput, player.AimInput, player.Buttons, actionsAllowed,
+            controller != null ? controller.NetworkMoveSpeed : PlayerMovementSimulation.MoveSpeed,
+            controller != null ? controller.NetworkAcceleration : 18f);
+        position = PlayerMovementSimulation.ConstrainToWorld(previousPosition, position, player.GameObject.GetComponent<CharacterController>());
         player.GameObject.transform.SetPositionAndRotation(position, Quaternion.Euler(0f, rotationY, 0f));
     }
 
@@ -220,7 +236,10 @@ public sealed class ServerPlayerManager : MonoBehaviour
             return;
         }
 
-        player.NextFireTick = serverTick + FireCooldownTicks;
+        GamePlayerAttack attack = player.GameObject.GetComponent<GamePlayerAttack>();
+        PlayerCombatStats stats = player.GameObject.GetComponent<PlayerCombatStats>();
+        float interval = (attack != null ? attack.NetworkAttackInterval : 0.2f) * (stats != null ? stats.FireIntervalMultiplier : 1f);
+        player.NextFireTick = serverTick + (uint)Mathf.Max(1, Mathf.CeilToInt(interval * NetworkRuntime.DefaultTickRate));
         Vector3 direction = player.GameObject.transform.forward;
         direction.y = 0f;
 
@@ -229,10 +248,19 @@ public sealed class ServerPlayerManager : MonoBehaviour
             return;
         }
 
-        Vector3 origin = player.GameObject.transform.position + Vector3.up + direction.normalized * 0.8f;
-        int projectileEntityId = projectileRegistry != null
-            ? projectileRegistry.SpawnPlayerProjectile(player.PlayerId, player.EntityId, origin, direction.normalized)
-            : 0;
+        Vector3 origin = attack != null ? attack.NetworkMuzzlePosition : player.GameObject.transform.position + Vector3.up;
+        int projectileEntityId = 0;
+        int count = Mathf.Clamp(stats != null ? stats.ProjectileCount : 1, 1, 32);
+        for (int i = 0; i < count; i++)
+        {
+            float spread = stats != null ? stats.SpreadAngle : 0f;
+            float angle = count > 1 ? Mathf.Lerp(-spread * 0.5f, spread * 0.5f, i / (float)(count - 1)) : 0f;
+            Vector3 shotDirection = Quaternion.AngleAxis(angle, Vector3.up) * direction.normalized;
+            int id = projectileRegistry != null ? projectileRegistry.SpawnPlayerProjectile(player.PlayerId, player.EntityId,
+                origin, shotDirection, attack != null ? attack.NetworkDamage : 10f, stats != null ? stats.PierceCount : 0,
+                attack != null ? attack.NetworkProjectileSpeed : 15f, attack != null ? attack.NetworkProjectileLifetime : 3f) : 0;
+            if (id > 0) projectileEntityId = id;
+        }
 
         if (projectileEntityId > 0)
         {
@@ -260,6 +288,70 @@ public sealed class ServerPlayerManager : MonoBehaviour
         return health == null || !health.IsDead;
     }
 
+    private void TryCastSkill(ServerPlayer player, uint tick, byte slot)
+    {
+        ClientInputButtons button = slot == 1 ? ClientInputButtons.Skill1 : ClientInputButtons.Skill2;
+        uint nextTick = slot == 1 ? player.NextSkill1Tick : player.NextSkill2Tick;
+        if ((player.Buttons & button) == 0 || tick < nextTick) return;
+        SkillManager skills = GameEntry.Skill;
+        string id = slot == 1 ? PlayerSkillInput.PrimarySkillId : PlayerSkillInput.SecondarySkillId;
+        if (skills == null || !skills.TryGetSkillConfig(id, out SkillManager.SkillRuntimeConfig config)) return;
+        uint readyTick = tick + (uint)Mathf.Max(1, Mathf.CeilToInt(config.Cooldown * NetworkRuntime.DefaultTickRate));
+        if (slot == 1) player.NextSkill1Tick = readyTick;
+        else player.NextSkill2Tick = readyTick;
+        Transform caster = player.GameObject.transform;
+        Vector3 origin = slot == 1 ? caster.position : player.GameObject.GetComponent<GamePlayerAttack>()?.NetworkMuzzlePosition ?? caster.position + Vector3.up;
+        server.BroadcastBattleEvent(new BattleEventMessage
+        {
+            EventType = BattleEventType.PlayerSkillCast,
+            SourceEntityId = player.EntityId,
+            SkillSlot = slot,
+            Position = origin,
+            Direction = caster.forward,
+            Range = config.Range,
+            Duration = config.WarningTime,
+            Phase = battleFlow?.State.Phase ?? BattlePhase.WaitingForPlayers,
+            CurrentWave = battleFlow?.State.CurrentWave ?? 0
+        });
+        if (slot == 1)
+        {
+            player.PendingShockWave = config;
+            player.ShockWaveImpactTick = tick + (uint)Mathf.CeilToInt(config.WarningTime * NetworkRuntime.DefaultTickRate);
+        }
+        else entityRegistry.ApplySkillDamage(player.EntityId, origin, caster.forward, config.Range, config.Damage, config.InterruptPower, true);
+    }
+
+    public void ApplyPlayerDamage(int entityId, in DamageInfo damage)
+    {
+        if (!NetworkRuntime.IsServer || damage.Amount <= 0f) return;
+        foreach (ServerPlayer player in players.Values)
+        {
+            if (player.EntityId != entityId || !IsAlive(player) || player.Action.IsInvincible) continue;
+            Health health = player.GameObject.GetComponent<Health>();
+            if (health == null) return;
+            float absorbed = Mathf.Min(health.CurrentShield, damage.Amount);
+            float applied = Mathf.Min(health.CurrentHealth, damage.Amount - absorbed);
+            health.ApplyNetworkState(health.CurrentHealth - applied, health.MaxHealth, health.CurrentShield - absorbed, health.ShieldCapacity);
+            if (applied > 0f)
+            {
+                player.Action.RollTicks = 0;
+                player.Action.HitStunTicks = health.IsDead ? 0 : 8;
+                NetworkEntity source = damage.Source != null ? damage.Source.GetComponent<NetworkEntity>() : null;
+                server.BroadcastBattleEvent(new BattleEventMessage
+                {
+                    EventType = health.IsDead ? BattleEventType.EntityDied : BattleEventType.Damage,
+                    SourceEntityId = source != null ? source.EntityId : 0,
+                    TargetEntityId = entityId,
+                    Amount = applied,
+                    CurrentHealth = health.CurrentHealth,
+                    MaxHealth = health.MaxHealth,
+                    Position = player.GameObject.transform.position
+                });
+            }
+            return;
+        }
+    }
+
     private WorldSnapshotMessage BuildSnapshot(uint serverTick)
     {
         WorldSnapshotMessage snapshot = new WorldSnapshotMessage { ServerTick = serverTick };
@@ -275,9 +367,16 @@ public sealed class ServerPlayerManager : MonoBehaviour
                 Position = player.GameObject.transform.position,
                 RotationY = player.GameObject.transform.eulerAngles.y,
                 CurrentHealth = health != null ? health.CurrentHealth : 100f,
-                MoveSpeed = player.MoveInput.magnitude * PlayerMovementSimulation.MoveSpeed,
+                MoveSpeed = player.Action.MoveDirection.magnitude * (player.GameObject.GetComponent<GrayboxPlayerController>()?.NetworkMoveSpeed ?? PlayerMovementSimulation.MoveSpeed),
                 AnimationState = player.MoveInput.sqrMagnitude > 0.001f ? (byte)1 : (byte)0,
-                LastProcessedInputSequence = player.LastProcessedInputSequence
+                LastProcessedInputSequence = player.LastProcessedInputSequence,
+                Action = player.Action,
+                MaxHealth = health != null ? health.MaxHealth : 100f,
+                Shield = health != null ? health.CurrentShield : 0f,
+                ShieldCapacity = health != null ? health.ShieldCapacity : 0f,
+                Skill1Cooldown = player.NextSkill1Tick > serverTick ? (player.NextSkill1Tick - serverTick) * PlayerMovementSimulation.TickDeltaTime : 0f,
+                Skill2Cooldown = player.NextSkill2Tick > serverTick ? (player.NextSkill2Tick - serverTick) * PlayerMovementSimulation.TickDeltaTime : 0f,
+                IsFiring = (player.Buttons & ClientInputButtons.Fire) != 0 && !player.Action.IsRolling && player.Action.HitStunTicks == 0 && IsAlive(player)
             });
         }
 
@@ -357,5 +456,10 @@ public sealed class ServerPlayerManager : MonoBehaviour
         public Vector2 AimInput;
         public ClientInputButtons Buttons;
         public uint NextFireTick;
+        public PlayerActionState Action;
+        public uint NextSkill1Tick;
+        public uint NextSkill2Tick;
+        public uint ShockWaveImpactTick;
+        public SkillManager.SkillRuntimeConfig PendingShockWave;
     }
 }

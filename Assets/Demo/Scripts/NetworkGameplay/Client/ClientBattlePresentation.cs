@@ -38,7 +38,8 @@ public sealed class ClientBattlePresentation : MonoBehaviour
 
     private void HandleBattleEvent(BattleEventMessage message, uint serverTick)
     {
-        if (message.EventType == BattleEventType.Damage || message.EventType == BattleEventType.EntityDied)
+        if (message.EventType == BattleEventType.Damage || message.EventType == BattleEventType.EntityDied ||
+            message.EventType == BattleEventType.PlayerFired || message.EventType == BattleEventType.PlayerSkillCast)
         {
             return;
         }

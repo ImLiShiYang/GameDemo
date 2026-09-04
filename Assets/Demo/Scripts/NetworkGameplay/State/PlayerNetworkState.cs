@@ -10,4 +10,11 @@ public sealed class PlayerNetworkState
     public float MoveSpeed;
     public byte AnimationState;
     public uint LastProcessedInputSequence;
+    public PlayerActionState Action;
+    public float MaxHealth = 100f;
+    public float Shield;
+    public float ShieldCapacity;
+    public float Skill1Cooldown;
+    public float Skill2Cooldown;
+    public bool IsFiring;
 }

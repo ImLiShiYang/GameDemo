@@ -6,6 +6,7 @@ public enum BattleEventType : byte
     Damage = 1,
     EntityDied = 2,
     PlayerFired = 3,
+    PlayerSkillCast = 4,
     CountdownStarted = 10,
     WaveStarted = 11,
     WaveCleared = 12,

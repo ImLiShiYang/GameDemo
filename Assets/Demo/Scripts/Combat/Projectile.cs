@@ -11,6 +11,8 @@ public class Projectile : MonoBehaviour
 
     [SerializeField]
     private float lifeTime = 3f;
+    public float NetworkSpeed => speed;
+    public float NetworkLifetime => lifeTime;
     
     [Header("碰撞")]
     [SerializeField]

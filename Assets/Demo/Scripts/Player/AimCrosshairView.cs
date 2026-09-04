@@ -53,6 +53,17 @@ public class AimCrosshairView : MonoBehaviour
     private bool facePlayer = true;
 
     private bool hasInitializedPosition;
+    private bool ownsCursor = true;
+
+    public void ConfigureNetworkView(GrayboxPlayerController controller, bool local)
+    {
+        aimSource = controller;
+        playerTransform = controller.transform;
+        ownsCursor = local;
+        SetVisible(false);
+        enabled = local;
+        if (local) ApplyCursorState(Application.isFocused);
+    }
 
     private void Awake()
     {
@@ -87,17 +98,19 @@ public class AimCrosshairView : MonoBehaviour
 
     private void OnDisable()
     {
-        RestoreCursor();
+        if (ownsCursor) RestoreCursor();
+        SetVisible(false);
     }
 
     private void OnDestroy()
     {
-        RestoreCursor();
+        if (ownsCursor) RestoreCursor();
     }
     
     private void LateUpdate()
     {
         if (aimSource == null ||
+            !aimSource.isActiveAndEnabled || !aimSource.HasAimPoint ||
             visualRoot == null ||
             aimSource.IsRolling ||
             !aimSource.TryGetCrosshairWorldPoint(out Vector3 crosshairWorldPoint))

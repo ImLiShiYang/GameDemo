@@ -5,6 +5,7 @@ using UnityEngine;
 /// 该组件发送“玩家想做什么”，并把同一份输入交给本地预测；最终位置仍以服务器快照为准。
 /// 组件由 NetworkBootstrap 在客户端进入主场景后动态添加到 NetworkBootstrap GameObject 上。
 /// </summary>
+[DefaultExecutionOrder(-200)]
 public sealed class ClientInputSender : MonoBehaviour
 {
     // 已完成 Welcome 验证的客户端连接，用于发送 ClientInput 消息。
@@ -16,6 +17,9 @@ public sealed class ClientInputSender : MonoBehaviour
     // 用于把 WASD 转成相机相对的世界方向，并把鼠标屏幕坐标投射到玩家所在的水平面。
     private Camera inputCamera;
     private ClientPlayerPrediction prediction;
+    private GrayboxPlayerController playerView;
+    private ClientInputButtons pressedButtons;
+    private bool waitForFireRelease;
 
     // 累计未发送的时间，使输入发送频率不依赖客户端画面帧率。
     private float sendAccumulator;
@@ -34,20 +38,36 @@ public sealed class ClientInputSender : MonoBehaviour
         client = networkClient;
         localPlayer = localPlayerTransform;
         prediction = playerPrediction;
+        playerView = localPlayerTransform.GetComponent<GrayboxPlayerController>();
         inputCamera = Camera.main;
     }
 
     private void Update()
     {
-        // 没有通过游戏服务器验证，或游戏处于暂停状态时，不发送操作输入。
-        if (client == null || !client.IsWelcomed || Time.timeScale <= 0f)
+        // 未验证时不发送；本地暂停/失焦时仍发送中性输入，避免服务器继续沿用旧操作。
+        if (client == null || !client.IsWelcomed)
         {
             return;
         }
 
+        bool inputAllowed = Time.timeScale > 0f && Application.isFocused;
+        if (!inputAllowed) 
+            waitForFireRelease = true;
+        else if (!Input.GetMouseButton(0)) 
+            waitForFireRelease = false;
+        
+        if (inputAllowed)
+        {
+            if (Input.GetKeyDown(playerView != null ? playerView.RollKey : KeyCode.LeftShift) || Input.GetKeyDown(KeyCode.Space))
+                pressedButtons |= ClientInputButtons.Roll;
+            if (Input.GetKeyDown(PlayerSkillInput.PrimarySkillKey)) pressedButtons |= ClientInputButtons.Skill1;
+            if (Input.GetKeyDown(PlayerSkillInput.SecondarySkillKey)) pressedButtons |= ClientInputButtons.Skill2;
+        }
+        else pressedButtons = ClientInputButtons.None;
+
         // 使用 unscaledDeltaTime，让发送频率不受 Time.timeScale 数值影响。
         // 当前 DefaultTickRate 为 20，因此正常情况下每 0.05 秒发送一次。
-        sendAccumulator += Time.unscaledDeltaTime;
+        sendAccumulator += Mathf.Min(Time.unscaledDeltaTime, 0.25f);
         float sendInterval = 1f / NetworkRuntime.DefaultTickRate;
 
         // 一帧耗时过长时可能需要补发多次，避免输入时钟因为掉帧而明显变慢。
@@ -63,18 +83,22 @@ public sealed class ClientInputSender : MonoBehaviour
         // movement 和 aim 都是方向/意图，不是客户端声明的位置。
         Vector3 movement = GetCameraRelativeMovement();
         Vector3 aim = GetAimDirection();
-        ClientInputButtons buttons = ClientInputButtons.None;
+        ClientInputButtons buttons = pressedButtons;
+        pressedButtons = ClientInputButtons.None;
 
         // 按钮用位标记合并到一个字节中，可以同时表达开火、翻滚等多个状态。
-        if (Input.GetMouseButton(0))
+        if (Input.GetMouseButton(0) && !waitForFireRelease)
         {
             buttons |= ClientInputButtons.Fire;
         }
 
-        if (Input.GetKey(KeyCode.Space))
+        bool inputAllowed = Time.timeScale > 0f && Application.isFocused;
+        if (UnityEngine.EventSystems.EventSystem.current != null && UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
         {
-            buttons |= ClientInputButtons.Roll;
+            buttons &= ~ClientInputButtons.Fire;
+            if (Input.GetMouseButton(0)) waitForFireRelease = true;
         }
+        if (!inputAllowed) { movement = Vector3.zero; buttons = ClientInputButtons.None; }
 
         // 服务器收到后会校验序号、限制方向长度，并在自己的 Tick 中计算权威位置。
         ClientInputMessage input = new ClientInputMessage
@@ -89,6 +113,8 @@ public sealed class ClientInputSender : MonoBehaviour
         };
         BattlePhase phase = NetworkBootstrap.Instance?.ClientBattle?.State.Phase ?? BattlePhase.WaitingForPlayers;
         bool movementEnabled = phase == BattlePhase.FightingEnemies || phase == BattlePhase.FightingBoss;
+        Health health = localPlayer != null ? localPlayer.GetComponent<Health>() : null;
+        movementEnabled &= health == null || !health.IsDead;
         prediction?.Predict(input, movementEnabled);
         client.SendClientInput(input);
     }
@@ -114,6 +140,7 @@ public sealed class ClientInputSender : MonoBehaviour
 
     private Vector3 GetAimDirection()
     {
+        if (playerView != null && playerView.IsNetworkView) return playerView.ReadNetworkAimDirection();
         if (inputCamera != null && localPlayer != null)
         {
             // 从鼠标位置发出一条摄像机射线，与经过玩家位置的水平面求交点。

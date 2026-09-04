@@ -27,6 +27,23 @@ public class Health : MonoBehaviour, IDamageable
     public event Action Died;
     public event Action<float, float> ShieldChanged;
     public event Action ShieldDepleted;
+    public event Action NetworkStateChanged;
+
+    // 网络生命值只是权威状态的镜像；不调用本地死亡销毁/结算逻辑。
+    public void ApplyNetworkState(float health, float maximum, float shield, float capacity)
+    {
+        bool healthChanged = currentHealth != health || maxHealth != maximum;
+        bool hadShield = currentShield > 0f;
+        bool shieldChanged = currentShield != shield || shieldCapacity != capacity;
+        maxHealth = Mathf.Max(1f, maximum);
+        currentHealth = Mathf.Clamp(health, 0f, maxHealth);
+        currentShield = Mathf.Max(0f, shield);
+        shieldCapacity = Mathf.Max(currentShield, capacity);
+        IsDead = currentHealth <= 0f;
+        if (shieldChanged) NotifyShieldChanged();
+        if (hadShield && currentShield <= 0f) ShieldDepleted?.Invoke();
+        if (healthChanged) NetworkStateChanged?.Invoke();
+    }
 
     private void Awake()
     {
@@ -89,6 +106,13 @@ public class Health : MonoBehaviour, IDamageable
 
     public void TakeDamage(in DamageInfo damageInfo)
     {
+        if (!NetworkRuntime.IsOffline)
+        {
+            NetworkEntity entity = GetComponent<NetworkEntity>();
+            if (NetworkRuntime.IsServer && entity != null && entity.EntityType == NetworkEntityType.Player)
+                NetworkBootstrap.Instance?.ServerPlayers?.ApplyPlayerDamage(entity.EntityId, damageInfo);
+            return;
+        }
         if (IsDead)
         {
             return;

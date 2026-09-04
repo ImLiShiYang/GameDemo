@@ -14,4 +14,8 @@ public sealed class BattleEventMessage
     public Vector3 Position;
     public BattlePhase Phase;
     public int CurrentWave;
+    public byte SkillSlot;
+    public Vector3 Direction;
+    public float Range;
+    public float Duration;
 }

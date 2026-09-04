@@ -7,7 +7,8 @@ public enum ClientInputButtons : byte
     Fire = 1 << 0,
     Roll = 1 << 1,
     Skill1 = 1 << 2,
-    Interact = 1 << 3
+    Interact = 1 << 3,
+    Skill2 = 1 << 4
 }
 
 public sealed class ClientInputMessage

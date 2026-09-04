@@ -12,6 +12,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
     private GameNetworkClient client;
     private NetworkPrefabCatalog prefabCatalog;
     private GameObject playerTemplate;
+    private GameObject remotePlayerTemplate;
     private Transform localPlayerTransform;
     private ClientPlayerPrediction localPrediction;
 
@@ -33,6 +34,10 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
         playerTemplate = scenePlayer.gameObject;
         DisableClientGameplay(playerTemplate);
+        // 保留未翻滚、未被动画改动武器父节点的模板，避免复制正在动作的本地玩家。
+        remotePlayerTemplate = Instantiate(playerTemplate);
+        remotePlayerTemplate.name = "NetworkPlayer_ViewTemplate";
+        remotePlayerTemplate.SetActive(false);
         NetworkEntity localEntity = playerTemplate.GetComponent<NetworkEntity>() ?? playerTemplate.AddComponent<NetworkEntity>();
         localEntity.Configure(NetworkRuntime.LocalPlayerEntityId, NetworkEntityType.Player, NetworkPrefabCatalog.PlayerPrefabId,
             NetworkRuntime.LocalPlayerId, false);
@@ -41,6 +46,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         playerTemplate.name = $"NetworkPlayer_Local_{NetworkRuntime.LocalPlayerId}";
         entities[localEntity.EntityId] = localEntity;
         localPlayerTransform = playerTemplate.transform;
+        ConfigurePlayerView(playerTemplate, true);
         client.SnapshotReceived += HandleSnapshot;
         client.EntitySpawnReceived += HandleEntitySpawn;
         client.EntityDespawnReceived += HandleEntityDespawn;
@@ -57,6 +63,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (remotePlayerTemplate != null) Destroy(remotePlayerTemplate);
         if (client != null)
         {
             client.SnapshotReceived -= HandleSnapshot;
@@ -81,6 +88,9 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             }
 
             NetworkTransformInterpolator interpolator = entity.GetComponent<NetworkTransformInterpolator>();
+            entity.GetComponent<Health>()?.ApplyNetworkState(state.CurrentHealth, state.MaxHealth, state.Shield, state.ShieldCapacity);
+            if (state.EntityId == NetworkRuntime.LocalPlayerEntityId)
+                GameEntry.Skill?.ApplyNetworkCooldowns(state.Skill1Cooldown, state.Skill2Cooldown);
 
             if (state.EntityId == NetworkRuntime.LocalPlayerEntityId && localPrediction != null)
             {
@@ -89,6 +99,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             else
             {
                 interpolator.ApplyState(state);
+                entity.GetComponent<GrayboxPlayerController>()?.ApplyNetworkMotion(state.Action, state.IsFiring, state.CurrentHealth <= 0f);
             }
         }
 
@@ -145,13 +156,15 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             return existing;
         }
 
-        GameObject playerObject = Instantiate(playerTemplate);
+        GameObject playerObject = Instantiate(remotePlayerTemplate);
+        playerObject.SetActive(true);
         playerObject.name = $"NetworkPlayer_Remote_{state.OwnerPlayerId}";
         DisableClientGameplay(playerObject);
         NetworkEntity entity = playerObject.GetComponent<NetworkEntity>() ?? playerObject.AddComponent<NetworkEntity>();
         entity.Configure(state.EntityId, NetworkEntityType.Player, NetworkPrefabCatalog.PlayerPrefabId, state.OwnerPlayerId, false);
         NetworkTransformInterpolator interpolator = playerObject.GetComponent<NetworkTransformInterpolator>() ?? playerObject.AddComponent<NetworkTransformInterpolator>();
         interpolator.Initialize(false);
+        ConfigurePlayerView(playerObject, false);
         entities.Add(state.EntityId, entity);
         NetworkLog.Info($"客户端创建远程玩家表现：Player {state.OwnerPlayerId}，EntityId {state.EntityId}。");
         return entity;
@@ -292,11 +305,17 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void HandleBattleEvent(BattleEventMessage message, uint serverTick)
     {
+        if (message.EventType == BattleEventType.PlayerSkillCast)
+        {
+            if (entities.TryGetValue(message.SourceEntityId, out NetworkEntity caster))
+                GameEntry.Skill?.PlayNetworkSkill(message, caster.transform);
+            return;
+        }
         if (message.EventType == BattleEventType.PlayerFired)
         {
             if (entities.TryGetValue(message.SourceEntityId, out NetworkEntity sourceEntity))
             {
-                sourceEntity.GetComponent<NetworkTransformInterpolator>()?.PlayAttack();
+                sourceEntity.GetComponent<GamePlayerAttack>()?.PlayNetworkShot();
             }
             else
             {
@@ -384,5 +403,38 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         {
             audioSource.enabled = false;
         }
+    }
+
+    private static void ConfigurePlayerView(GameObject playerObject, bool local)
+    {
+        GrayboxPlayerController controller = playerObject.GetComponent<GrayboxPlayerController>();
+        controller.ConfigureNetworkView(local);
+        if (!local)
+        {
+            foreach (Camera camera in playerObject.GetComponentsInChildren<Camera>(true)) camera.enabled = false;
+            foreach (AudioListener listener in playerObject.GetComponentsInChildren<AudioListener>(true)) listener.enabled = false;
+        }
+        foreach (MonoBehaviour behaviour in playerObject.GetComponentsInChildren<MonoBehaviour>(true))
+        {
+            if (behaviour is PlayerRootMotionRelay || behaviour is PlayerAnimationEvents || behaviour is PlayerShieldVisual ||
+                behaviour.GetType().Namespace == "UnityEngine.Animations.Rigging") behaviour.enabled = true;
+        }
+        foreach (AudioSource source in playerObject.GetComponentsInChildren<AudioSource>(true))
+        {
+            source.playOnAwake = false;
+            source.enabled = true;
+            source.Stop();
+        }
+        foreach (AimCrosshairView crosshair in playerObject.GetComponentsInChildren<AimCrosshairView>(true))
+            crosshair.ConfigureNetworkView(controller, local);
+        if (local)
+        {
+            foreach (AimCrosshairView crosshair in FindObjectsOfType<AimCrosshairView>(true))
+            {
+                if (!crosshair.transform.IsChildOf(playerObject.transform) && crosshair.gameObject.activeInHierarchy)
+                    crosshair.ConfigureNetworkView(controller, true);
+            }
+        }
+        playerObject.GetComponentInChildren<UnityEngine.Animations.Rigging.RigBuilder>()?.Build();
     }
 }

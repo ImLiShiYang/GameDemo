@@ -174,6 +174,102 @@ public class GrayboxPlayerController : MonoBehaviour
     public bool HasWeaponAimWorldPoint => hasWeaponAimWorldPoint;
     
     private bool isHitStunned;
+    private bool networkPresentationOnly;
+    private bool networkLocalPlayer;
+    private bool networkDead;
+    private bool networkFiring;
+
+    public KeyCode RollKey => rollKey;
+    public float NetworkMoveSpeed => walkSpeed * moveSpeedMultiplier;
+    public float NetworkAcceleration => acceleration;
+    public bool IsNetworkView => networkPresentationOnly;
+
+    /// <summary>复用单机模型、枪械、IK 和瞄准表现，但绝不执行本地位移、Root Motion 或判伤。</summary>
+    public void ConfigureNetworkView(bool isLocalPlayer)
+    {
+        networkPresentationOnly = true;
+        networkLocalPlayer = isLocalPlayer;
+        networkDead = false;
+        isRolling = false;
+        isHitStunned = false;
+        RestoreWeaponNormalPose();
+        if (animator != null)
+        {
+            animator.enabled = true;
+            animator.applyRootMotion = false;
+            animator.updateMode = AnimatorUpdateMode.UnscaledTime;
+        }
+        enabled = true;
+    }
+
+    public Vector3 ReadNetworkAimDirection()
+    {
+        if (networkLocalPlayer && TryGetMouseHorizontalDirection(out Vector3 direction))
+        {
+            return direction;
+        }
+        return transform.forward;
+    }
+
+    public void ApplyNetworkMotion(PlayerActionState action, bool firing, bool dead)
+    {
+        bool rolling = action.IsRolling && !dead;
+        bool stunned = action.HitStunTicks > 0 && !dead;
+        if ((rolling && !isRolling) || (stunned && !isHitStunned) || (dead && !networkDead))
+        {
+            EnterAnimationDrivenWeaponState();
+            if (animator != null && rolling) animator.SetTrigger(rollTriggerHash);
+            if (animator != null && stunned) animator.SetTrigger("Hit");
+        }
+        if (!rolling && !stunned && !dead && (isRolling || isHitStunned || networkDead))
+        {
+            RestoreWeaponNormalPose();
+            if (animator != null)
+            {
+                animator.ResetTrigger(rollTriggerHash);
+                animator.ResetTrigger("Hit");
+                animator.CrossFade("Locomotion", 0.08f);
+            }
+        }
+        isRolling = rolling;
+        isHitStunned = stunned;
+        networkDead = dead;
+        networkFiring = firing && !rolling && !stunned && !dead;
+        isInvincible = action.IsInvincible && !dead;
+        currentMoveDirection = rolling || stunned || dead ? Vector3.zero : new Vector3(action.MoveDirection.x, 0f, action.MoveDirection.y);
+        if (animator != null)
+        {
+            animator.SetBool("Dead", dead);
+            animator.SetBool("Fire", networkFiring);
+        }
+    }
+
+    private void UpdateNetworkView()
+    {
+        // 渲染平滑在网络插值器中完成；这里只驱动局部方向 Blend Tree 和武器姿势。
+        bool canAim = !isRolling && !isHitStunned && !networkDead;
+        UpdateAimRigWeight(canAim);
+        UpdateLocomotionAnimator();
+        if (!canAim)
+        {
+            HasAimPoint = false;
+            hasWeaponAimWorldPoint = false;
+            return;
+        }
+        Vector3 direction = networkLocalPlayer ? ReadNetworkAimDirection() : transform.forward;
+        lastAimDirection = direction;
+        hasCurrentAimDirection = true;
+        UpdateWeaponHorizontalAimRotation(direction);
+        if (networkLocalPlayer)
+        {
+            UpdateRigAimTarget(direction);
+        }
+        else if (aimRigTarget != null)
+        {
+            SetWeaponAimWorldPoint(AimOriginPosition + direction * 20f);
+        }
+        SyncHandIKTargetsToWeaponGrips();
+    }
 
     public bool IsHitStunned => isHitStunned;
 
@@ -264,6 +360,11 @@ public class GrayboxPlayerController : MonoBehaviour
 
     private void Update()
     {
+        if (networkPresentationOnly)
+        {
+            UpdateNetworkView();
+            return;
+        }
         // 游戏暂停时，停止角色输入和射击逻辑。
         // 同时清空移动状态，防止暂停前的输入在恢复后继续残留。
         if (Time.timeScale <= 0f)
@@ -380,6 +481,15 @@ public class GrayboxPlayerController : MonoBehaviour
     
     private void LateUpdate()
     {
+        if (networkPresentationOnly)
+        {
+            if (hasCurrentAimDirection && !isRolling && !isHitStunned && !networkDead)
+                UpdateAimPointFromWeaponRay(lastAimDirection);
+            UpdateAimLine();
+            // 两端玩家都显示瞄准线；远程方向来自同步朝向，不读取本机鼠标。
+            if (aimLine != null && (networkDead || isHitStunned)) aimLine.enabled = false;
+            return;
+        }
         if (muzzle != null && aimRigTarget != null)
         {
             // 绿色：理论上枪应该指向的方向。
@@ -505,6 +615,7 @@ public class GrayboxPlayerController : MonoBehaviour
     /// </summary>
     public void FinishHitReaction()
     {
+        if (networkPresentationOnly) return;
         isHitStunned = false;
 
         currentMoveDirection = Vector3.zero;
@@ -686,14 +797,14 @@ public class GrayboxPlayerController : MonoBehaviour
             MoveXHash,
             moveParameters.x,
             animationDampTime,
-            Time.deltaTime
+            networkPresentationOnly ? Time.unscaledDeltaTime : Time.deltaTime
         );
 
         animator.SetFloat(
             MoveYHash,
             moveParameters.y,
             animationDampTime,
-            Time.deltaTime
+            networkPresentationOnly ? Time.unscaledDeltaTime : Time.deltaTime
         );
     }
 
@@ -827,7 +938,7 @@ public class GrayboxPlayerController : MonoBehaviour
     /// <returns></returns>
     private Plane getWeaponAimPlane()
     {
-        Plane weaponAimPlane = new Plane(Vector3.up, muzzle.position);
+        Plane weaponAimPlane = new Plane(Vector3.up, muzzle != null ? muzzle.position : transform.position + Vector3.up * aimPlaneHeight);
         return weaponAimPlane;
     }
 
@@ -1123,7 +1234,7 @@ public class GrayboxPlayerController : MonoBehaviour
         aimRig.weight = Mathf.MoveTowards(
             aimRig.weight,
             targetWeight,
-            aimRigBlendSpeed * Time.deltaTime
+            aimRigBlendSpeed * (networkPresentationOnly ? Time.unscaledDeltaTime : Time.deltaTime)
         );
     }
 
@@ -1433,10 +1544,11 @@ public class GrayboxPlayerController : MonoBehaviour
             return;
         }
 
-        GameObject lineObject = new GameObject("Aim Line");
+        Transform existingLine = transform.Find("Aim Line");
+        GameObject lineObject = existingLine != null ? existingLine.gameObject : new GameObject("Aim Line");
         lineObject.transform.SetParent(transform, false);
 
-        aimLine = lineObject.AddComponent<LineRenderer>();
+        aimLine = lineObject.GetComponent<LineRenderer>() ?? lineObject.AddComponent<LineRenderer>();
         aimLine.useWorldSpace = true;
         aimLine.positionCount = 2;
         aimLine.alignment = LineAlignment.View;
@@ -1558,6 +1670,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
     public void ApplyRollRootMotion(Vector3 animatorDeltaPosition)
     {
+        if (networkPresentationOnly || !NetworkRuntime.IsOffline) return;
         if (!isRolling || characterController == null)
         {
             return;
@@ -1590,6 +1703,7 @@ public class GrayboxPlayerController : MonoBehaviour
 
     public void FinishRoll()
     {
+        if (networkPresentationOnly) return;
         // 保险处理：无论 EndRollInvincibility 动画事件有没有正常触发，
         // 翻滚结束时都必须取消无敌。
         isInvincible = false;
@@ -1621,6 +1735,7 @@ public class GrayboxPlayerController : MonoBehaviour
     /// </summary>
     public void BeginRollInvincibility()
     {
+        if (networkPresentationOnly) return;
         if (!isRolling)
         {
             return;
@@ -1634,6 +1749,7 @@ public class GrayboxPlayerController : MonoBehaviour
     /// </summary>
     public void EndRollInvincibility()
     {
+        if (networkPresentationOnly) return;
         isInvincible = false;
     }
     

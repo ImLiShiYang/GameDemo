@@ -192,6 +192,12 @@ public static class NetworkProtocol
             writer.Write(message.Position.z);
             writer.Write((byte)message.Phase);
             writer.Write(message.CurrentWave);
+            writer.Write(message.SkillSlot);
+            writer.Write(message.Direction.x);
+            writer.Write(message.Direction.y);
+            writer.Write(message.Direction.z);
+            writer.Write(message.Range);
+            writer.Write(message.Duration);
         });
     }
 
@@ -207,7 +213,11 @@ public static class NetworkProtocol
             MaxHealth = reader.ReadSingle(),
             Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
             Phase = (BattlePhase)reader.ReadByte(),
-            CurrentWave = reader.ReadInt32()
+            CurrentWave = reader.ReadInt32(),
+            SkillSlot = reader.ReadByte(),
+            Direction = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            Range = reader.ReadSingle(),
+            Duration = reader.ReadSingle()
         });
         ValidateBattleEvent(message);
         return message;
@@ -228,6 +238,7 @@ public static class NetworkProtocol
 
             foreach (PlayerNetworkState player in message.Players)
             {
+                ValidatePlayerState(player);
                 writer.Write(player.EntityId);
                 writer.Write(player.OwnerPlayerId);
                 writer.Write(player.Position.x);
@@ -238,6 +249,19 @@ public static class NetworkProtocol
                 writer.Write(player.MoveSpeed);
                 writer.Write(player.AnimationState);
                 writer.Write(player.LastProcessedInputSequence);
+                writer.Write(player.Action.RollTicks);
+                writer.Write(player.Action.RollCooldownTicks);
+                writer.Write(player.Action.HitStunTicks);
+                writer.Write(player.Action.RollDirection.x);
+                writer.Write(player.Action.RollDirection.y);
+                writer.Write(player.Action.MoveDirection.x);
+                writer.Write(player.Action.MoveDirection.y);
+                writer.Write(player.MaxHealth);
+                writer.Write(player.Shield);
+                writer.Write(player.ShieldCapacity);
+                writer.Write(player.Skill1Cooldown);
+                writer.Write(player.Skill2Cooldown);
+                writer.Write(player.IsFiring);
             }
 
             if (message.Entities.Count > MaximumSnapshotEntityCount)
@@ -299,7 +323,21 @@ public static class NetworkProtocol
                     CurrentHealth = reader.ReadSingle(),
                     MoveSpeed = reader.ReadSingle(),
                     AnimationState = reader.ReadByte(),
-                    LastProcessedInputSequence = reader.ReadUInt32()
+                    LastProcessedInputSequence = reader.ReadUInt32(),
+                    Action = new PlayerActionState
+                    {
+                        RollTicks = reader.ReadInt32(),
+                        RollCooldownTicks = reader.ReadInt32(),
+                        HitStunTicks = reader.ReadInt32(),
+                        RollDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
+                        MoveDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle())
+                    },
+                    MaxHealth = reader.ReadSingle(),
+                    Shield = reader.ReadSingle(),
+                    ShieldCapacity = reader.ReadSingle(),
+                    Skill1Cooldown = reader.ReadSingle(),
+                    Skill2Cooldown = reader.ReadSingle(),
+                    IsFiring = reader.ReadBoolean()
                 };
                 ValidatePlayerState(player);
                 message.Players.Add(player);
@@ -413,6 +451,22 @@ public static class NetworkProtocol
         ValidateFinite(player.RotationY, nameof(player.RotationY));
         ValidateFinite(player.CurrentHealth, nameof(player.CurrentHealth));
         ValidateFinite(player.MoveSpeed, nameof(player.MoveSpeed));
+        ValidateFinite(player.MaxHealth, nameof(player.MaxHealth));
+        ValidateFinite(player.Shield, nameof(player.Shield));
+        ValidateFinite(player.ShieldCapacity, nameof(player.ShieldCapacity));
+        ValidateFinite(player.Skill1Cooldown, nameof(player.Skill1Cooldown));
+        ValidateFinite(player.Skill2Cooldown, nameof(player.Skill2Cooldown));
+        ValidateFinite(player.Action.RollDirection.x, "RollDirection.x");
+        ValidateFinite(player.Action.RollDirection.y, "RollDirection.y");
+        ValidateFinite(player.Action.MoveDirection.x, "MoveDirection.x");
+        ValidateFinite(player.Action.MoveDirection.y, "MoveDirection.y");
+        if (player.Action.RollTicks < 0 || player.Action.RollTicks > PlayerMovementSimulation.RollDurationTicks ||
+            player.Action.RollCooldownTicks < 0 || player.Action.HitStunTicks < 0 || player.MaxHealth <= 0f ||
+            player.CurrentHealth < 0f || player.CurrentHealth > player.MaxHealth || player.Shield < 0f ||
+            player.Shield > player.ShieldCapacity || player.Skill1Cooldown < 0f || player.Skill2Cooldown < 0f)
+        {
+            throw new InvalidDataException("玩家动作或生命状态无效。");
+        }
     }
 
     private static void ValidateEntitySpawn(EntitySpawnMessage message)
@@ -487,6 +541,16 @@ public static class NetworkProtocol
             throw new InvalidDataException("战斗事件包含非法 EntityId。");
         }
         ValidateFinite(message.Amount, nameof(message.Amount));
+        ValidateFinite(message.Direction.x, "Direction.x");
+        ValidateFinite(message.Direction.y, "Direction.y");
+        ValidateFinite(message.Direction.z, "Direction.z");
+        ValidateFinite(message.Range, nameof(message.Range));
+        ValidateFinite(message.Duration, nameof(message.Duration));
+        if (message.EventType == BattleEventType.PlayerSkillCast &&
+            (message.SourceEntityId <= 0 || message.SkillSlot < 1 || message.SkillSlot > 2 || message.Range <= 0f || message.Duration < 0f))
+        {
+            throw new InvalidDataException("玩家技能事件无效。");
+        }
         ValidateFinite(message.CurrentHealth, nameof(message.CurrentHealth));
         ValidateFinite(message.MaxHealth, nameof(message.MaxHealth));
         ValidateFinite(message.Position.x, "Position.x");
