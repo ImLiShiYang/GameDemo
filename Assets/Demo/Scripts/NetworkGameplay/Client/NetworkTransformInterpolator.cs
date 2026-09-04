@@ -48,6 +48,20 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
         initialized = true;
     }
 
+    public void ApplyPredictedState(Vector3 position, float rotationY, float moveSpeed)
+    {
+        ApplyTransformState(position, rotationY, moveSpeed);
+    }
+
+    public void SnapTo(Vector3 position, float rotationY, float moveSpeed)
+    {
+        targetPosition = position;
+        targetRotation = Quaternion.Euler(0f, rotationY, 0f);
+        transform.SetPositionAndRotation(targetPosition, targetRotation);
+        initialized = true;
+        ApplyAnimation(moveSpeed);
+    }
+
     public void PlayAttack()
     {
         if (animator != null && hasAttack)
@@ -74,6 +88,11 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
 
         initialized = true;
 
+        ApplyAnimation(moveSpeed);
+    }
+
+    private void ApplyAnimation(float moveSpeed)
+    {
         if (animator != null)
         {
             float normalizedSpeed = moveSpeed > 0.05f ? 1f : 0f;

@@ -29,6 +29,7 @@ public sealed class NetworkDebugPanel : MonoBehaviour
         GameNetworkClient client = NetworkBootstrap.Instance?.Client;
         long sentMessages = NetworkRuntime.IsServer ? server?.SentMessageCount ?? 0 : client?.SentMessageCount ?? 0;
         long receivedMessages = NetworkRuntime.IsServer ? server?.ReceivedMessageCount ?? 0 : client?.ReceivedMessageCount ?? 0;
+        ClientPlayerPrediction prediction = NetworkBootstrap.Instance?.ClientPrediction;
         string text =
             $"网络角色: {NetworkRuntime.Role}\n" +
             $"连接状态: {connection}\n" +
@@ -41,14 +42,17 @@ public sealed class NetworkDebugPanel : MonoBehaviour
             $"快照间隔: {(NetworkRuntime.IsClient ? client?.SecondsSinceLastSnapshot ?? 0f : 0f):0.00}s\n" +
             $"实体数量: {entityCount}\n" +
             $"战斗阶段: {ResolveBattlePhase()}\n" +
-            $"消息: ↑{sentMessages} ↓{receivedMessages}";
+            $"消息: ↑{sentMessages} ↓{receivedMessages}\n" +
+            $"预测输入: {prediction?.PendingInputCount ?? 0}\n" +
+            $"最近校正: {prediction?.LastCorrectionDistance ?? 0f:0.000}m / " +
+            $"{prediction?.LastCorrectionAngle ?? 0f:0.0}°";
 
         if (!string.IsNullOrEmpty(NetworkLog.LastError))
         {
             text += $"\n最后错误: {NetworkLog.LastError}";
         }
 
-        GUI.Box(new Rect(12f, 12f, 390f, 270f), text, style);
+        GUI.Box(new Rect(12f, 12f, 390f, 315f), text, style);
     }
 
     private static BattlePhase ResolveBattlePhase()

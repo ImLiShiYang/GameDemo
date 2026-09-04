@@ -13,6 +13,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
     private NetworkPrefabCatalog prefabCatalog;
     private GameObject playerTemplate;
     private Transform localPlayerTransform;
+    private ClientPlayerPrediction localPrediction;
 
     public int EntityCount => entities.Count;
     public Transform LocalPlayerTransform => localPlayerTransform;
@@ -36,7 +37,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         localEntity.Configure(NetworkRuntime.LocalPlayerEntityId, NetworkEntityType.Player, NetworkPrefabCatalog.PlayerPrefabId,
             NetworkRuntime.LocalPlayerId, false);
         NetworkTransformInterpolator interpolator = playerTemplate.GetComponent<NetworkTransformInterpolator>() ?? playerTemplate.AddComponent<NetworkTransformInterpolator>();
-        interpolator.Initialize(true);
+        interpolator.Initialize(false);
         playerTemplate.name = $"NetworkPlayer_Local_{NetworkRuntime.LocalPlayerId}";
         entities[localEntity.EntityId] = localEntity;
         localPlayerTransform = playerTemplate.transform;
@@ -47,6 +48,11 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         client.ReplayKnownEntitySpawns(HandleEntitySpawn);
         NetworkLog.Info($"客户端已绑定本地玩家表现：EntityId {localEntity.EntityId}。");
         return true;
+    }
+
+    public void SetLocalPrediction(ClientPlayerPrediction prediction)
+    {
+        localPrediction = prediction;
     }
 
     private void OnDestroy()
@@ -75,7 +81,15 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             }
 
             NetworkTransformInterpolator interpolator = entity.GetComponent<NetworkTransformInterpolator>();
-            interpolator.ApplyState(state);
+
+            if (state.EntityId == NetworkRuntime.LocalPlayerEntityId && localPrediction != null)
+            {
+                localPrediction.Reconcile(state);
+            }
+            else
+            {
+                interpolator.ApplyState(state);
+            }
         }
 
         foreach (EntityNetworkState state in snapshot.Entities)

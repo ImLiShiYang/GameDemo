@@ -3,8 +3,9 @@ using UnityEngine;
 
 public sealed class ServerPlayerManager : MonoBehaviour
 {
-    private const float PlayerMoveSpeed = 3.2f;
     private const int FireCooldownTicks = 5;
+    private const int MaxPendingInputs = 128;
+    private const int InputHoldTicks = 4;
     private readonly Dictionary<int, ServerPlayer> players = new Dictionary<int, ServerPlayer>(2);
 
     private GameNetworkServer server;
@@ -135,27 +136,47 @@ public sealed class ServerPlayerManager : MonoBehaviour
 
     private void HandleClientInput(int playerId, ClientInputMessage input)
     {
-        if (!players.TryGetValue(playerId, out ServerPlayer player) || input.Sequence <= player.LastInputSequence)
+        if (!players.TryGetValue(playerId, out ServerPlayer player) || input.Sequence <= player.LastReceivedInputSequence)
         {
             return;
         }
 
-        Vector2 movement = Vector2.ClampMagnitude(new Vector2(input.Horizontal, input.Vertical), 1f);
-        Vector2 aim = Vector2.ClampMagnitude(new Vector2(input.AimX, input.AimZ), 1f);
-        player.LastInputSequence = input.Sequence;
-        player.MoveInput = movement;
-        player.AimInput = aim;
-        player.Buttons = input.Buttons & (ClientInputButtons.Fire | ClientInputButtons.Roll | ClientInputButtons.Skill1 | ClientInputButtons.Interact);
+        if (player.PendingInputs.Count >= MaxPendingInputs)
+        {
+            NetworkLog.Warning($"Player {playerId} 输入队列已满，丢弃 Sequence {input.Sequence}。");
+            return;
+        }
+
+        ClientInputMessage sanitizedInput = new ClientInputMessage
+        {
+            Sequence = input.Sequence,
+            ClientTick = input.ClientTick,
+            Horizontal = Mathf.Clamp(input.Horizontal, -1f, 1f),
+            Vertical = Mathf.Clamp(input.Vertical, -1f, 1f),
+            AimX = Mathf.Clamp(input.AimX, -1f, 1f),
+            AimZ = Mathf.Clamp(input.AimZ, -1f, 1f),
+            Buttons = input.Buttons & (ClientInputButtons.Fire | ClientInputButtons.Roll | ClientInputButtons.Skill1 | ClientInputButtons.Interact)
+        };
+        player.LastReceivedInputSequence = input.Sequence;
+        player.PendingInputs.Enqueue(sanitizedInput);
     }
 
-    private void HandleServerTick(uint serverTick, float tickDeltaTime)
+    private void HandleServerTick(uint serverTick, float _)
     {
         foreach (ServerPlayer player in players.Values)
         {
-            if (battleFlow == null || battleFlow.AllowsPlayerActions)
+            ConsumeNextInput(player, serverTick);
+            bool actionsAllowed = battleFlow == null || battleFlow.AllowsPlayerActions;
+
+            if (actionsAllowed)
             {
-                SimulatePlayer(player, tickDeltaTime);
+                SimulatePlayer(player);
                 SimulateFire(player, serverTick);
+            }
+            else
+            {
+                player.MoveInput = Vector2.zero;
+                player.Buttons = ClientInputButtons.None;
             }
         }
 
@@ -165,16 +186,31 @@ public sealed class ServerPlayerManager : MonoBehaviour
         }
     }
 
-    private static void SimulatePlayer(ServerPlayer player, float tickDeltaTime)
+    private static void ConsumeNextInput(ServerPlayer player, uint serverTick)
     {
-        Vector3 movement = new Vector3(player.MoveInput.x, 0f, player.MoveInput.y);
-        player.GameObject.transform.position += movement * (PlayerMoveSpeed * tickDeltaTime);
+        player.Buttons = ClientInputButtons.None;
 
-        if (player.AimInput.sqrMagnitude > 0.0001f)
+        if (player.PendingInputs.Count > 0)
         {
-            Vector3 aimDirection = new Vector3(player.AimInput.x, 0f, player.AimInput.y);
-            player.GameObject.transform.rotation = Quaternion.LookRotation(aimDirection, Vector3.up);
+            ClientInputMessage input = player.PendingInputs.Dequeue();
+            player.MoveInput = Vector2.ClampMagnitude(new Vector2(input.Horizontal, input.Vertical), 1f);
+            player.AimInput = Vector2.ClampMagnitude(new Vector2(input.AimX, input.AimZ), 1f);
+            player.Buttons = input.Buttons;
+            player.LastProcessedInputSequence = input.Sequence;
+            player.LastConsumedInputTick = serverTick;
         }
+        else if (serverTick - player.LastConsumedInputTick > InputHoldTicks)
+        {
+            player.MoveInput = Vector2.zero;
+        }
+    }
+
+    private static void SimulatePlayer(ServerPlayer player)
+    {
+        Vector3 position = player.GameObject.transform.position;
+        float rotationY = player.GameObject.transform.eulerAngles.y;
+        PlayerMovementSimulation.Step(ref position, ref rotationY, player.MoveInput, player.AimInput);
+        player.GameObject.transform.SetPositionAndRotation(position, Quaternion.Euler(0f, rotationY, 0f));
     }
 
     private void SimulateFire(ServerPlayer player, uint serverTick)
@@ -239,9 +275,9 @@ public sealed class ServerPlayerManager : MonoBehaviour
                 Position = player.GameObject.transform.position,
                 RotationY = player.GameObject.transform.eulerAngles.y,
                 CurrentHealth = health != null ? health.CurrentHealth : 100f,
-                MoveSpeed = player.MoveInput.magnitude * PlayerMoveSpeed,
+                MoveSpeed = player.MoveInput.magnitude * PlayerMovementSimulation.MoveSpeed,
                 AnimationState = player.MoveInput.sqrMagnitude > 0.001f ? (byte)1 : (byte)0,
-                LastProcessedInputSequence = player.LastInputSequence
+                LastProcessedInputSequence = player.LastProcessedInputSequence
             });
         }
 
@@ -313,7 +349,10 @@ public sealed class ServerPlayerManager : MonoBehaviour
         public int PlayerId { get; }
         public int EntityId { get; }
         public GameObject GameObject { get; }
-        public uint LastInputSequence;
+        public readonly Queue<ClientInputMessage> PendingInputs = new Queue<ClientInputMessage>(MaxPendingInputs);
+        public uint LastReceivedInputSequence;
+        public uint LastProcessedInputSequence;
+        public uint LastConsumedInputTick;
         public Vector2 MoveInput;
         public Vector2 AimInput;
         public ClientInputButtons Buttons;

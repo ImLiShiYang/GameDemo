@@ -57,6 +57,8 @@ public sealed class NetworkBootstrap : MonoBehaviour
     public ClientEntityRegistry ClientEntities { get; private set; }
     // Client 模式下把服务器战斗事件映射为提示、音乐和结算界面。
     public ClientBattlePresentation ClientBattle { get; private set; }
+    // Client 模式下预测本地玩家移动，并按服务器确认序号执行校正与输入重演。
+    public ClientPlayerPrediction ClientPrediction { get; private set; }
 
     /// <summary>
     /// Unity 在加载首个场景前调用的真正网络入口。
@@ -403,11 +405,15 @@ public sealed class NetworkBootstrap : MonoBehaviour
             return;
         }
 
-        // 输入发送器同样挂在 NetworkBootstrap 上；它引用本地玩家 Transform，但不直接移动玩家。
-        ClientInputSender inputSender = gameObject.AddComponent<ClientInputSender>();
-        inputSender.Initialize(Client, ClientEntities.LocalPlayerTransform);
         ClientBattle = gameObject.AddComponent<ClientBattlePresentation>();
         ClientBattle.Initialize(Client);
+        NetworkTransformInterpolator localInterpolator = ClientEntities.LocalPlayerTransform.GetComponent<NetworkTransformInterpolator>();
+        ClientPrediction = gameObject.AddComponent<ClientPlayerPrediction>();
+        ClientPrediction.Initialize(ClientEntities.LocalPlayerTransform, localInterpolator);
+        ClientEntities.SetLocalPrediction(ClientPrediction);
+        // 输入发送器按固定 Tick 上传输入，并把相同输入立即交给本地预测器。
+        ClientInputSender inputSender = gameObject.AddComponent<ClientInputSender>();
+        inputSender.Initialize(Client, ClientEntities.LocalPlayerTransform, ClientPrediction);
     }
 
     private static void DisableAll<T>() where T : Behaviour

@@ -2,7 +2,7 @@ using UnityEngine;
 
 /// <summary>
 /// 在客户端主线程采集本地玩家的键盘和鼠标输入，并按固定频率发送给游戏服务器。
-/// 该组件只发送“玩家想做什么”，不会直接移动玩家；最终位置由服务器计算后通过世界快照返回。
+/// 该组件发送“玩家想做什么”，并把同一份输入交给本地预测；最终位置仍以服务器快照为准。
 /// 组件由 NetworkBootstrap 在客户端进入主场景后动态添加到 NetworkBootstrap GameObject 上。
 /// </summary>
 public sealed class ClientInputSender : MonoBehaviour
@@ -10,11 +10,12 @@ public sealed class ClientInputSender : MonoBehaviour
     // 已完成 Welcome 验证的客户端连接，用于发送 ClientInput 消息。
     private GameNetworkClient client;
 
-    // 客户端本地玩家的表现对象。这里只用它的位置和朝向计算鼠标瞄准方向，不直接控制它移动。
+    // 客户端本地玩家的表现对象，用于计算鼠标瞄准方向；移动由预测组件按固定 Tick 推进。
     private Transform localPlayer;
 
     // 用于把 WASD 转成相机相对的世界方向，并把鼠标屏幕坐标投射到玩家所在的水平面。
     private Camera inputCamera;
+    private ClientPlayerPrediction prediction;
 
     // 累计未发送的时间，使输入发送频率不依赖客户端画面帧率。
     private float sendAccumulator;
@@ -28,10 +29,11 @@ public sealed class ClientInputSender : MonoBehaviour
     /// <summary>
     /// 主场景准备完成后由 NetworkBootstrap 调用，注入网络连接和本地玩家表现对象。
     /// </summary>
-    public void Initialize(GameNetworkClient networkClient, Transform localPlayerTransform)
+    public void Initialize(GameNetworkClient networkClient, Transform localPlayerTransform, ClientPlayerPrediction playerPrediction)
     {
         client = networkClient;
         localPlayer = localPlayerTransform;
+        prediction = playerPrediction;
         inputCamera = Camera.main;
     }
 
@@ -75,7 +77,7 @@ public sealed class ClientInputSender : MonoBehaviour
         }
 
         // 服务器收到后会校验序号、限制方向长度，并在自己的 Tick 中计算权威位置。
-        client.SendClientInput(new ClientInputMessage
+        ClientInputMessage input = new ClientInputMessage
         {
             Sequence = ++inputSequence,
             ClientTick = ++clientTick,
@@ -84,7 +86,11 @@ public sealed class ClientInputSender : MonoBehaviour
             AimX = aim.x,
             AimZ = aim.z,
             Buttons = buttons
-        });
+        };
+        BattlePhase phase = NetworkBootstrap.Instance?.ClientBattle?.State.Phase ?? BattlePhase.WaitingForPlayers;
+        bool movementEnabled = phase == BattlePhase.FightingEnemies || phase == BattlePhase.FightingBoss;
+        prediction?.Predict(input, movementEnabled);
+        client.SendClientInput(input);
     }
 
     private Vector3 GetCameraRelativeMovement()
