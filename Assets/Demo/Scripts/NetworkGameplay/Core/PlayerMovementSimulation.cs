@@ -2,7 +2,7 @@ using UnityEngine;
 
 /// <summary>
 /// 客户端预测与服务器权威模拟共用的固定 Tick 玩家移动算法。
-/// 核心 Step 不读取设备、不访问物理系统，也不播放表现；静态碰撞由两端调用同一 ConstrainToWorld。
+/// 核心 Step 只计算期望位移和动作状态；两端交给 NetworkCharacterMotor 执行实际运动。
 /// </summary>
 public static class PlayerMovementSimulation
 {
@@ -12,44 +12,6 @@ public static class PlayerMovementSimulation
     public const int RollCooldownTicks = 7;
     public const float RollDistance = 4f;
     public static float TickDeltaTime => 1f / NetworkRuntime.DefaultTickRate;
-    private static readonly RaycastHit[] WorldHits = new RaycastHit[32];
-
-    /// <summary>只与静态场景碰撞；角色/敌人的网络位置不参与预测碰撞，避免重演依赖未来状态。</summary>
-    public static Vector3 ConstrainToWorld(Vector3 start, Vector3 desired, CharacterController shape)
-    {
-        if (shape == null) return desired;
-        Vector3 scale = shape.transform.lossyScale;
-        float radius = Mathf.Max(0.05f, shape.radius * Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.z)));
-        float halfSegment = Mathf.Max(0f, shape.height * Mathf.Abs(scale.y) * 0.5f - radius);
-        Vector3 centerOffset = Vector3.Scale(shape.center, scale);
-        Vector3 remaining = desired - start;
-        Vector3 result = start;
-        for (int pass = 0; pass < 2 && remaining.sqrMagnitude > 0.000001f; pass++)
-        {
-            float distance = remaining.magnitude;
-            Vector3 direction = remaining / distance;
-            Vector3 center = result + centerOffset;
-            int count = Physics.CapsuleCastNonAlloc(center + Vector3.up * halfSegment, center - Vector3.up * halfSegment,
-                radius, direction, WorldHits, distance + 0.02f, Physics.AllLayers, QueryTriggerInteraction.Ignore);
-            float nearest = distance + 0.02f;
-            Vector3 normal = Vector3.zero;
-            for (int i = 0; i < count; i++)
-            {
-                RaycastHit hit = WorldHits[i];
-                if (hit.collider == null || hit.collider.GetComponentInParent<NetworkEntity>() != null ||
-                    hit.collider.attachedRigidbody != null || hit.normal.y > 0.7f || hit.distance >= nearest) continue;
-                nearest = hit.distance;
-                normal = hit.normal;
-            }
-            if (normal == Vector3.zero) { result += remaining; break; }
-            float travel = Mathf.Clamp(nearest - 0.02f, 0f, distance);
-            result += direction * travel;
-            remaining = Vector3.ProjectOnPlane(direction * (distance - travel), normal);
-            remaining.y = 0f;
-        }
-        return result;
-    }
-
     public static void Step(ref Vector3 position, ref float rotationY, ref PlayerActionState action,
         Vector2 move, Vector2 aim, ClientInputButtons buttons, bool actionsAllowed, float moveSpeed = MoveSpeed, float acceleration = 18f)
     {

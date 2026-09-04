@@ -62,12 +62,10 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
 
     private void RegisterRuntimeTestEnemy()
     {
-        GameObject template = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        template.name = "NetworkTestEnemy_Prefab10";
+        GameObject template = CreateCharacterTemplate("NetworkTestEnemy_Prefab10", TestEnemyPrefabId, new Vector3(0.9f, 1.2f, 0.9f));
         template.transform.SetParent(poolRoot, false);
-        template.transform.localScale = new Vector3(0.9f, 1.2f, 0.9f);
 
-        Renderer visual = template.GetComponent<Renderer>();
+        Renderer visual = template.GetComponentInChildren<Renderer>();
 
         if (visual != null)
         {
@@ -116,12 +114,10 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
 
     private void RegisterRuntimeBoss()
     {
-        GameObject template = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        template.name = "NetworkBoss_Prefab100";
+        GameObject template = CreateCharacterTemplate("NetworkBoss_Prefab100", BossPrefabId, new Vector3(1.8f, 2.2f, 1.8f));
         template.transform.SetParent(poolRoot, false);
-        template.transform.localScale = new Vector3(1.8f, 2.2f, 1.8f);
 
-        Renderer visual = template.GetComponent<Renderer>();
+        Renderer visual = template.GetComponentInChildren<Renderer>();
 
         if (visual != null)
         {
@@ -139,5 +135,17 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
         Transform storageRoot = new GameObject("Prefab 100 - Boss").transform;
         storageRoot.SetParent(poolRoot, false);
         pools.Add(BossPrefabId, new GameObjectPool(template, storageRoot, 1, 2));
+    }
+
+    private static GameObject CreateCharacterTemplate(string name, int prefabId, Vector3 scale)
+    {
+        GameObject root = new GameObject(name);
+        GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        visual.name = "Visual";
+        visual.transform.SetParent(root.transform, false);
+        visual.transform.localPosition = Vector3.up * (NetworkCharacterShape.ForPrefab(prefabId).Height * 0.5f);
+        visual.transform.localScale = scale;
+        visual.GetComponent<Collider>().enabled = false;
+        return root;
     }
 }

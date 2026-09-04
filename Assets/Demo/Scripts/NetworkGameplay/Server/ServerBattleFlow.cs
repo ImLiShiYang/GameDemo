@@ -21,6 +21,7 @@ public sealed class ServerBattleFlow : MonoBehaviour
     private Vector3 battleOrigin;
     private uint phaseEndTick;
     private uint nextSpawnTick;
+    private uint nextBossSpawnAttemptTick;
     private int enemiesToSpawn;
     private int spawnedEnemyCount;
     private bool scenePrepared;
@@ -33,7 +34,6 @@ public sealed class ServerBattleFlow : MonoBehaviour
     {
         server = networkServer;
         entities = entityRegistry;
-        server.ServerTicked += HandleServerTick;
         entities.EntityDied += HandleEntityDied;
     }
 
@@ -58,18 +58,20 @@ public sealed class ServerBattleFlow : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (server != null)
-        {
-            server.ServerTicked -= HandleServerTick;
-        }
-
         if (entities != null)
         {
             entities.EntityDied -= HandleEntityDied;
         }
     }
 
-    private void HandleServerTick(uint serverTick, float tickDeltaTime)
+    public void PrepareTick(uint serverTick)
+    {
+        if (!scenePrepared) return;
+        if (state.Phase == BattlePhase.FightingEnemies) UpdateWaveSpawning(serverTick);
+        if (state.Phase == BattlePhase.BossIntro && serverTick >= phaseEndTick && serverTick >= nextBossSpawnAttemptTick) SpawnBoss();
+    }
+
+    public void CompleteTick(uint serverTick)
     {
         if (!scenePrepared)
         {
@@ -81,13 +83,13 @@ public sealed class ServerBattleFlow : MonoBehaviour
         switch (state.Phase)
         {
             case BattlePhase.WaitingForPlayers:
-                if (server.ConnectedPlayerCount >= RequiredPlayerCount)
+                if (server.GetComponent<ServerPlayerManager>().PlayerCount >= RequiredPlayerCount)
                 {
                     EnterCountdown(serverTick);
                 }
                 break;
             case BattlePhase.Countdown:
-                if (server.ConnectedPlayerCount < RequiredPlayerCount)
+                if (server.GetComponent<ServerPlayerManager>().PlayerCount < RequiredPlayerCount)
                 {
                     EnterWaitingForPlayers();
                 }
@@ -97,7 +99,6 @@ public sealed class ServerBattleFlow : MonoBehaviour
                 }
                 break;
             case BattlePhase.FightingEnemies:
-                UpdateWaveSpawning(serverTick);
                 TryCompleteWave(serverTick);
                 break;
             case BattlePhase.WaveCleared:
@@ -114,10 +115,6 @@ public sealed class ServerBattleFlow : MonoBehaviour
                 }
                 break;
             case BattlePhase.BossIntro:
-                if (serverTick >= phaseEndTick)
-                {
-                    SpawnBoss();
-                }
                 break;
         }
     }
@@ -172,6 +169,8 @@ public sealed class ServerBattleFlow : MonoBehaviour
         if (entityId == 0)
         {
             Destroy(enemyObject);
+            nextSpawnTick = serverTick + SpawnIntervalTicks;
+            return;
         }
         else
         {
@@ -220,6 +219,7 @@ public sealed class ServerBattleFlow : MonoBehaviour
         if (entityId == 0)
         {
             bossSpawned = false;
+            nextBossSpawnAttemptTick = server.ServerTick + SpawnIntervalTicks;
             Destroy(bossObject);
             NetworkLog.Error("服务器 Boss 注册失败，将在后续 Tick 重试。");
             return;

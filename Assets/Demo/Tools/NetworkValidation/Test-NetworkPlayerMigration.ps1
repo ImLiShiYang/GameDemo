@@ -14,7 +14,12 @@ if ($null -eq $response) { throw 'Open the project in Tuanjie and let scripts co
 $priorMonoPath = $env:MONO_PATH
 Push-Location $projectRoot
 try {
-    $compileOutput = & $mono $compiler "@$($response.FullName)" '-out:Temp/PlayerMigrationVerify.dll' '-refout:Temp/PlayerMigrationVerify.ref.dll' 2>&1
+    # Unity 尚未自动刷新时，将新增的联机运行时脚本补入现有编译响应文件。
+    $responseText = [IO.File]::ReadAllText($response.FullName).Replace('\', '/')
+    $extraSources = @(Get-ChildItem (Join-Path $projectRoot 'Assets/Demo/Scripts/NetworkGameplay') -Filter '*.cs' -Recurse |
+        ForEach-Object { $_.FullName.Substring($projectRoot.Length + 1).Replace('\', '/') } |
+        Where-Object { -not $responseText.Contains($_) })
+    $compileOutput = & $mono $compiler "@$($response.FullName)" @extraSources '-out:Temp/PlayerMigrationVerify.dll' '-refout:Temp/PlayerMigrationVerify.ref.dll' 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($compileOutput -join [Environment]::NewLine) }
     Write-Output 'Gameplay compilation passed.'
     & $mono $compiler '-noconfig' '-nologo' '-nostdlib+' '-define:NETWORK_PLAYER_MIGRATION_CHECKS' '-out:Temp/NetworkPlayerMigrationChecks.exe' `

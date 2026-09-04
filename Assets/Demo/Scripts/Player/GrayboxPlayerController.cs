@@ -1465,7 +1465,7 @@ public class GrayboxPlayerController : MonoBehaviour
         {
             RaycastHit hit = aimHits[i];
 
-            if (hit.collider == null)
+            if (hit.collider == null || hit.collider.GetComponentInParent<NetworkCharacterMotor>() != null)
             {
                 continue;
             }

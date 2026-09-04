@@ -19,7 +19,9 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
     private float predictedRotationY;
     private PlayerActionState predictedAction;
     private GrayboxPlayerController playerView;
-    private CharacterController collisionShape;
+    private NetworkCharacterWorld characterWorld;
+    private NetworkCharacterMotor motor;
+    private bool hasBaseline;
     private bool dead;
     private bool firing;
     private uint latestPredictedSequence;
@@ -30,13 +32,16 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
     public float LastCorrectionDistance { get; private set; }
     public float LastCorrectionAngle { get; private set; }
     public PlayerActionState Action => predictedAction;
+    public CharacterMotorState MotorState => motor != null ? motor.State : default;
 
-    public void Initialize(Transform localPlayerTransform, NetworkTransformInterpolator interpolator)
+    public void Initialize(Transform localPlayerTransform, NetworkTransformInterpolator interpolator, int localEntityId = 0)
     {
         playerTransform = localPlayerTransform;
         presentation = interpolator;
         playerView = localPlayerTransform.GetComponent<GrayboxPlayerController>();
-        collisionShape = localPlayerTransform.GetComponent<CharacterController>();
+        characterWorld = NetworkCharacterWorld.GetOrCreate(gameObject);
+        motor = characterWorld.Create(localEntityId > 0 ? localEntityId : NetworkRuntime.LocalPlayerEntityId,
+            NetworkPrefabCatalog.PlayerPrefabId, localPlayerTransform.position, true);
         predictedPosition = playerTransform.position;
         predictedRotationY = playerTransform.eulerAngles.y;
         initialized = true;
@@ -55,12 +60,14 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
             Move = movementEnabled ? new Vector2(input.Horizontal, input.Vertical) : Vector2.zero,
             Aim = new Vector2(input.AimX, input.AimZ),
             Buttons = input.Buttons,
-            Enabled = movementEnabled
+            Enabled = movementEnabled,
+            CollisionContext = characterWorld.LatestContext
         };
         inputBuffer[input.Sequence % InputBufferSize] = predictedInput;
         latestPredictedSequence = input.Sequence;
-        Simulate(predictedInput);
         PendingInputCount = CalculatePendingInputCount(lastAcknowledgedSequence, latestPredictedSequence);
+        if (!hasBaseline || PendingInputCount >= InputBufferSize) return;
+        Simulate(predictedInput);
         presentation.ApplyPredictedState(predictedPosition, predictedRotationY,
             predictedInput.Move.magnitude * PlayerMovementSimulation.MoveSpeed);
         playerView?.ApplyNetworkMotion(predictedAction, firing, dead);
@@ -82,6 +89,12 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         dead = serverState.CurrentHealth <= 0f;
         predictedAction = serverState.Action;
         firing = serverState.IsFiring;
+        bool firstBaseline = !hasBaseline;
+        hasBaseline = true;
+        motor.SetBlocking(!dead);
+        CharacterMotorState baseline = new CharacterMotorState
+        { Position = serverState.Position, VerticalVelocity = serverState.VerticalVelocity, Grounded = serverState.Grounded };
+        motor.Restore(baseline);
 
         if (acknowledgedSequence > latestPredictedSequence)
         {
@@ -108,10 +121,16 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         }
         int pendingCount = CalculatePendingInputCount(lastAcknowledgedSequence, latestPredictedSequence);
 
-        if (pendingCount >= InputBufferSize)
+        bool historyMissing = pendingCount >= InputBufferSize;
+        for (int offset = 1; !historyMissing && offset <= pendingCount; offset++)
         {
-            NetworkLog.Warning("客户端未确认输入超过预测缓冲区容量，丢弃历史并使用服务器状态。");
-            latestPredictedSequence = lastAcknowledgedSequence;
+            uint sequence = lastAcknowledgedSequence + (uint)offset;
+            historyMissing = inputBuffer[sequence % InputBufferSize].Sequence != sequence;
+        }
+        if (historyMissing)
+        {
+            NetworkLog.Warning("客户端预测历史缺失或溢出，放弃重演并使用服务器状态。");
+            // 保留之后新收到的输入：每次失败都清空会让缺口永远追不上服务器确认。
             pendingCount = 0;
         }
         else
@@ -120,11 +139,6 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
             {
                 uint sequence = lastAcknowledgedSequence + (uint)offset;
                 PredictedInput input = inputBuffer[sequence % InputBufferSize];
-
-                if (input.Sequence != sequence)
-                {
-                    continue;
-                }
 
                 Simulate(input);
             }
@@ -135,7 +149,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         LastCorrectionAngle = Mathf.Abs(Mathf.DeltaAngle(previousPredictedRotationY, predictedRotationY));
         playerView?.ApplyNetworkMotion(predictedAction, firing, dead);
 
-        if (LastCorrectionDistance >= HardSnapDistance || LastCorrectionAngle >= HardSnapAngle)
+        if (firstBaseline || historyMissing || LastCorrectionDistance >= HardSnapDistance || LastCorrectionAngle >= HardSnapAngle)
         {
             presentation.SnapTo(predictedPosition, predictedRotationY, serverState.MoveSpeed);
         }
@@ -163,6 +177,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         public Vector2 Aim;
         public ClientInputButtons Buttons;
         public bool Enabled;
+        public CharacterCollisionPose[] CollisionContext;
     }
 
     private void Simulate(PredictedInput input)
@@ -172,8 +187,14 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
             input.Move, input.Aim, input.Buttons, input.Enabled && !dead,
             playerView != null ? playerView.NetworkMoveSpeed : PlayerMovementSimulation.MoveSpeed,
             playerView != null ? playerView.NetworkAcceleration : 18f);
-        predictedPosition = PlayerMovementSimulation.ConstrainToWorld(previousPosition, predictedPosition, collisionShape);
+        using (characterWorld.UseContext(input.CollisionContext))
+            predictedPosition = motor.Step(predictedPosition - previousPosition, PlayerMovementSimulation.TickDeltaTime).Position;
         firing = input.Enabled && !dead && !predictedAction.IsRolling && predictedAction.HitStunTicks == 0 &&
             (input.Buttons & ClientInputButtons.Fire) != 0;
+    }
+
+    private void OnDestroy()
+    {
+        if (characterWorld != null && motor != null) characterWorld.Remove(motor.EntityId);
     }
 }

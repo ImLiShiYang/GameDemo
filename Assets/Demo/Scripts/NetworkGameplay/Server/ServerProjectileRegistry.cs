@@ -21,7 +21,6 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
     {
         server = networkServer;
         entityRegistry = serverEntityRegistry;
-        server.ServerTicked += HandleServerTick;
     }
 
     public int SpawnPlayerProjectile(int ownerPlayerId, int ownerEntityId, Vector3 origin, Vector3 direction,
@@ -59,15 +58,7 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         return entityId;
     }
 
-    private void OnDestroy()
-    {
-        if (server != null)
-        {
-            server.ServerTicked -= HandleServerTick;
-        }
-    }
-
-    private void HandleServerTick(uint serverTick, float tickDeltaTime)
+    public void SimulateTick(uint serverTick, float tickDeltaTime)
     {
         pendingDespawns.Clear();
 
@@ -139,7 +130,7 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         {
             RaycastHit hit = worldHits[i];
 
-            if (hit.collider == null || hit.collider.GetComponentInParent<NetworkEntity>() != null || hit.distance >= hitDistance)
+            if (hit.collider == null || NetworkCharacterWorld.IsCharacterCollider(hit.collider) || hit.distance >= hitDistance)
             {
                 continue;
             }

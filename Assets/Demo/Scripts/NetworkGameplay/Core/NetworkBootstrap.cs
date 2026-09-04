@@ -256,19 +256,20 @@ public sealed class NetworkBootstrap : MonoBehaviour
         Server = gameObject.AddComponent<GameNetworkServer>();
         // 添加权威玩家状态管理组件。
         ServerPlayers = gameObject.AddComponent<ServerPlayerManager>();
-        // 添加通用网络实体注册表，并优先订阅 Tick，使实体移动先于快照构建执行。
+        // 注册实体；各系统不自行订阅 Tick，由 ServerSimulationLoop 统一安排阶段。
         ServerEntities = gameObject.AddComponent<ServerEntityRegistry>();
         ServerEntities.Initialize(Server);
         // 战斗状态机只在服务器运行，并显式维护波次生成完成与存活计数。
         ServerBattle = gameObject.AddComponent<ServerBattleFlow>();
         ServerBattle.Initialize(Server, ServerEntities);
-        // 子弹注册表在玩家管理器之后订阅 Tick，确保本 Tick 开火后即可推进新子弹。
+        // 本 Tick 开火后推进子弹，最后才发送快照。
         ServerProjectiles = gameObject.AddComponent<ServerProjectileRegistry>();
-        // 订阅服务器的认证、输入、断线和 Tick 事件。
+        // 订阅认证、输入和断线事件。
         ServerPlayers.Initialize(Server, ServerEntities, ServerProjectiles, ServerBattle);
         ServerProjectiles.Initialize(Server, ServerEntities);
         // 通用敌人 AI 通过玩家管理器查找最近的存活权威玩家，不在客户端选择目标。
         ServerEntities.SetPlayerManager(ServerPlayers);
+        gameObject.AddComponent<ServerSimulationLoop>().Initialize(Server, ServerPlayers, ServerEntities, ServerProjectiles, ServerBattle);
         // 开始监听命令行指定端口。
         Server.StartServer(options.ServerPort);
     }

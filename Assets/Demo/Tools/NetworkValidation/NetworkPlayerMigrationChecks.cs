@@ -113,11 +113,20 @@ public static class NetworkPlayerMigrationChecks
         {
             EntityId = 1001, OwnerPlayerId = 1, Position = new Vector3(2f, 0f, 5f), RotationY = 90f,
             CurrentHealth = 80f, MaxHealth = 100f, Shield = 10f, ShieldCapacity = 25f,
+            VerticalVelocity = -2f, Grounded = true,
             Skill1Cooldown = 4.5f, Skill2Cooldown = 2f, IsFiring = true, LastProcessedInputSequence = 12,
             Action = new PlayerActionState { RollTicks = 10, RollCooldownTicks = 3, HitStunTicks = 0, RollDirection = Vector2.right, MoveDirection = Vector2.up }
         };
         snapshot.Players.Add(player);
         PlayerNetworkState decoded = NetworkProtocol.DeserializeWorldSnapshot(NetworkProtocol.Serialize(snapshot)).Players[0];
+        Assert(decoded.VerticalVelocity == -2f && decoded.Grounded, "Snapshot preserves grounded motor state");
+        player.VerticalVelocity = -12.5f;
+        player.Grounded = false;
+        decoded = NetworkProtocol.DeserializeWorldSnapshot(NetworkProtocol.Serialize(snapshot)).Players[0];
+        Assert(decoded.VerticalVelocity == -12.5f && !decoded.Grounded, "Snapshot preserves falling motor state");
+        player.VerticalVelocity = float.NaN;
+        Reject(() => NetworkProtocol.Serialize(snapshot), "Non-finite vertical velocity rejected");
+        player.VerticalVelocity = -2f;
         Assert(decoded.Action.RollTicks == 10 && decoded.Action.RollDirection == Vector2.right && decoded.Action.MoveDirection == Vector2.up,
             "Snapshot includes complete replay action state");
         Assert(decoded.Shield == 10f && decoded.MaxHealth == 100f && decoded.IsFiring && decoded.Skill1Cooldown == 4.5f && decoded.Skill2Cooldown == 2f,
@@ -137,7 +146,7 @@ public static class NetworkPlayerMigrationChecks
         Reject(() => NetworkProtocol.Serialize(snapshot), "Non-finite cooldown rejected");
         skill.SkillSlot = 3;
         Reject(() => NetworkProtocol.Serialize(skill), "Unknown skill slot rejected");
-        Assert(NetworkPacketHeader.CurrentProtocolVersion == 6, "Protocol version bumped for incompatible payload changes");
+        Assert(NetworkPacketHeader.CurrentProtocolVersion == 7, "Protocol version bumped for incompatible payload changes");
     }
 
     private static void Reject(Action action, string message)

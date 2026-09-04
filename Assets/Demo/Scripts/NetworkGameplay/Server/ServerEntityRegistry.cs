@@ -20,6 +20,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
     private ServerPlayerManager playerManager;
     private int nextEntityId = FirstDynamicEntityId;
     private bool scenePrepared;
+    private NetworkCharacterWorld characterWorld;
 
     public int EntityCount => entities.Count;
     public event Action<int, NetworkEntityType, Vector3> EntityDied;
@@ -27,8 +28,8 @@ public sealed class ServerEntityRegistry : MonoBehaviour
     public void Initialize(GameNetworkServer networkServer)
     {
         server = networkServer;
+        characterWorld = NetworkCharacterWorld.GetOrCreate(gameObject);
         server.PlayerAuthenticated += HandlePlayerAuthenticated;
-        server.ServerTicked += HandleServerTick;
     }
 
     public void SetPlayerManager(ServerPlayerManager serverPlayerManager)
@@ -67,6 +68,12 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         NetworkEntity networkEntity = gameObject.GetComponent<NetworkEntity>() ?? gameObject.AddComponent<NetworkEntity>();
         networkEntity.Configure(entityId, entityType, prefabId, ownerPlayerId, true);
         ServerEntityRecord record = new ServerEntityRecord(networkEntity, currentHealth, maxHealth, velocity, spawnTick);
+        if (entityType == NetworkEntityType.Enemy || entityType == NetworkEntityType.Boss)
+        {
+            if (!characterWorld.TryFindSpawn(prefabId, gameObject.transform.position, out Vector3 position)) return 0;
+            gameObject.transform.position = position;
+            record.Motor = characterWorld.Create(entityId, prefabId, position, true);
+        }
         entities.Add(entityId, record);
         server.BroadcastEntitySpawn(CreateSpawnMessage(record));
         NetworkLog.Info($"服务器注册网络实体：EntityId {entityId}，Type {entityType}，PrefabId {prefabId}。");
@@ -174,6 +181,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         entities.Remove(entityId);
+        characterWorld.Remove(entityId);
         server.BroadcastEntityDespawn(new EntityDespawnMessage { EntityId = entityId, Reason = reason });
 
         if (record.Entity != null)
@@ -220,7 +228,6 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         server.PlayerAuthenticated -= HandlePlayerAuthenticated;
-        server.ServerTicked -= HandleServerTick;
     }
 
     private int AllocateEntityId()
@@ -241,7 +248,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
     }
 
-    private void HandleServerTick(uint serverTick, float tickDeltaTime)
+    public void AppendMovementOrder(List<int> order)
     {
         if (!scenePrepared)
         {
@@ -253,9 +260,19 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             if (record.Entity != null && (record.Entity.EntityType == NetworkEntityType.Enemy ||
                 record.Entity.EntityType == NetworkEntityType.Boss))
             {
-                UpdateEnemyAI(record, tickDeltaTime);
+                order.Add(record.Entity.EntityId);
             }
         }
+    }
+
+    public void MoveCharacter(int entityId, float tickDeltaTime)
+    {
+        if (!entities.TryGetValue(entityId, out ServerEntityRecord record) || record.Motor == null) return;
+        record.Velocity = Vector3.zero;
+        UpdateEnemyAI(record, tickDeltaTime);
+        Vector3 previous = record.Motor.State.Position;
+        record.Entity.transform.position = record.Motor.Step(record.Velocity * tickDeltaTime, tickDeltaTime).Position;
+        record.Velocity = (record.Entity.transform.position - previous) / tickDeltaTime;
     }
 
     private void UpdateEnemyAI(ServerEntityRecord enemy, float tickDeltaTime)
@@ -288,7 +305,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         float moveSpeed = isBoss ? BossMoveSpeed : EnemyMoveSpeed;
-        enemy.Entity.transform.position += direction.normalized * (moveSpeed * tickDeltaTime);
+        enemy.Velocity = direction.normalized * moveSpeed;
         enemy.AnimationState = 1;
     }
 
@@ -322,6 +339,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         int deadEntityId = target.Entity.EntityId;
+        target.Motor?.SetBlocking(false);
         NetworkEntityType deadEntityType = target.Entity.EntityType;
         server.BroadcastBattleEvent(new BattleEventMessage
         {
@@ -375,5 +393,6 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         public byte AnimationState;
         public int TargetEntityId;
         public uint InterruptedUntilTick;
+        public NetworkCharacterMotor Motor;
     }
 }

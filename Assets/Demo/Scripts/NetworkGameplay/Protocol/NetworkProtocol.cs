@@ -262,6 +262,8 @@ public static class NetworkProtocol
                 writer.Write(player.Skill1Cooldown);
                 writer.Write(player.Skill2Cooldown);
                 writer.Write(player.IsFiring);
+                writer.Write(player.VerticalVelocity);
+                writer.Write(player.Grounded);
             }
 
             if (message.Entities.Count > MaximumSnapshotEntityCount)
@@ -337,7 +339,9 @@ public static class NetworkProtocol
                     ShieldCapacity = reader.ReadSingle(),
                     Skill1Cooldown = reader.ReadSingle(),
                     Skill2Cooldown = reader.ReadSingle(),
-                    IsFiring = reader.ReadBoolean()
+                    IsFiring = reader.ReadBoolean(),
+                    VerticalVelocity = reader.ReadSingle(),
+                    Grounded = reader.ReadBoolean()
                 };
                 ValidatePlayerState(player);
                 message.Players.Add(player);
@@ -451,6 +455,7 @@ public static class NetworkProtocol
         ValidateFinite(player.RotationY, nameof(player.RotationY));
         ValidateFinite(player.CurrentHealth, nameof(player.CurrentHealth));
         ValidateFinite(player.MoveSpeed, nameof(player.MoveSpeed));
+        ValidateFinite(player.VerticalVelocity, nameof(player.VerticalVelocity));
         ValidateFinite(player.MaxHealth, nameof(player.MaxHealth));
         ValidateFinite(player.Shield, nameof(player.Shield));
         ValidateFinite(player.ShieldCapacity, nameof(player.ShieldCapacity));

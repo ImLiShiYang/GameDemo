@@ -6,6 +6,8 @@ public sealed class ServerPlayerManager : MonoBehaviour
     private const int MaxPendingInputs = 128;
     private const int InputHoldTicks = 4;
     private readonly Dictionary<int, ServerPlayer> players = new Dictionary<int, ServerPlayer>(2);
+    private readonly SortedDictionary<int, int> pendingSpawns = new SortedDictionary<int, int>();
+    private NetworkCharacterWorld characterWorld;
 
     private GameNetworkServer server;
     private ServerEntityRegistry entityRegistry;
@@ -54,11 +56,11 @@ public sealed class ServerPlayerManager : MonoBehaviour
         entityRegistry = serverEntityRegistry;
         projectileRegistry = serverProjectileRegistry;
         battleFlow = serverBattleFlow;
+        characterWorld = NetworkCharacterWorld.GetOrCreate(gameObject);
         snapshotTickInterval = Mathf.Max(1, NetworkRuntime.DefaultTickRate / NetworkRuntime.DefaultSnapshotRate);
         server.PlayerAuthenticated += HandlePlayerAuthenticated;
         server.PlayerDisconnected += HandlePlayerDisconnected;
         server.ClientInputReceived += HandleClientInput;
-        server.ServerTicked += HandleServerTick;
     }
 
     public void PrepareScene()
@@ -95,7 +97,6 @@ public sealed class ServerPlayerManager : MonoBehaviour
         server.PlayerAuthenticated -= HandlePlayerAuthenticated;
         server.PlayerDisconnected -= HandlePlayerDisconnected;
         server.ClientInputReceived -= HandleClientInput;
-        server.ServerTicked -= HandleServerTick;
     }
 
     private void HandlePlayerAuthenticated(int playerId, int entityId)
@@ -106,16 +107,28 @@ public sealed class ServerPlayerManager : MonoBehaviour
             return;
         }
 
+        pendingSpawns[playerId] = entityId;
+    }
+
+    private bool TrySpawnPlayer(int playerId, int entityId)
+    {
+        Vector3 requested = spawnOrigin + Vector3.right * (playerId == 1 ? -1.25f : 1.25f);
+        if (!characterWorld.TryFindSpawn(NetworkPrefabCatalog.PlayerPrefabId, requested, out Vector3 position)) return false;
         GameObject playerObject = CreatePlayerObject(playerId);
+        playerObject.transform.position = position;
         NetworkEntity entity = playerObject.GetComponent<NetworkEntity>() ?? playerObject.AddComponent<NetworkEntity>();
         entity.Configure(entityId, NetworkEntityType.Player, NetworkPrefabCatalog.PlayerPrefabId, playerId, true);
         ServerPlayer player = new ServerPlayer(playerId, entityId, playerObject);
+        player.Motor = characterWorld.Create(entityId, NetworkPrefabCatalog.PlayerPrefabId, position, true);
         players.Add(playerId, player);
         NetworkLog.Info($"服务器创建权威玩家 Player {playerId}，EntityId {entityId}，Position {playerObject.transform.position}。");
+        return true;
     }
 
     private void HandlePlayerDisconnected(int playerId, int entityId)
     {
+        pendingSpawns.Remove(playerId);
+        characterWorld.Remove(entityId);
         if (!players.TryGetValue(playerId, out ServerPlayer player))
         {
             return;
@@ -160,13 +173,39 @@ public sealed class ServerPlayerManager : MonoBehaviour
         player.PendingInputs.Enqueue(sanitizedInput);
     }
 
-    private void HandleServerTick(uint serverTick, float _)
+    public void PrepareTick(uint serverTick, List<int> movementOrder)
     {
+        if (!scenePrepared) return;
+        List<int> spawned = new List<int>();
+        foreach (KeyValuePair<int, int> spawn in pendingSpawns)
+            if (TrySpawnPlayer(spawn.Key, spawn.Value)) spawned.Add(spawn.Key);
+        foreach (int id in spawned) pendingSpawns.Remove(id);
         foreach (ServerPlayer player in players.Values)
         {
             ConsumeNextInput(player, serverTick);
+            player.Motor.SetBlocking(IsAlive(player));
+            movementOrder.Add(player.EntityId);
+        }
+    }
+
+    public bool MoveCharacter(int entityId)
+    {
+        foreach (ServerPlayer player in players.Values)
+        {
+            if (player.EntityId != entityId) continue;
+            SimulatePlayer(player, IsAlive(player) && (battleFlow == null || battleFlow.AllowsPlayerActions));
+            return true;
+        }
+        return false;
+    }
+
+    public void SimulateCombat(uint serverTick)
+    {
+        List<ServerPlayer> ordered = new List<ServerPlayer>(players.Values);
+        ordered.Sort((a, b) => a.EntityId.CompareTo(b.EntityId));
+        foreach (ServerPlayer player in ordered)
+        {
             bool actionsAllowed = IsAlive(player) && (battleFlow == null || battleFlow.AllowsPlayerActions);
-            SimulatePlayer(player, actionsAllowed);
 
             if (actionsAllowed && !player.Action.IsRolling && player.Action.HitStunTicks == 0)
             {
@@ -189,7 +228,11 @@ public sealed class ServerPlayerManager : MonoBehaviour
             }
         }
 
-        if (serverTick % snapshotTickInterval == 0)
+    }
+
+    public void SendSnapshot(uint serverTick)
+    {
+        if (scenePrepared && serverTick % snapshotTickInterval == 0)
         {
             server.BroadcastSnapshot(BuildSnapshot(serverTick));
         }
@@ -218,14 +261,14 @@ public sealed class ServerPlayerManager : MonoBehaviour
 
     private static void SimulatePlayer(ServerPlayer player, bool actionsAllowed)
     {
-        Vector3 position = player.GameObject.transform.position;
+        Vector3 position = player.Motor.State.Position;
         float rotationY = player.GameObject.transform.eulerAngles.y;
         Vector3 previousPosition = position;
         GrayboxPlayerController controller = player.GameObject.GetComponent<GrayboxPlayerController>();
         PlayerMovementSimulation.Step(ref position, ref rotationY, ref player.Action, player.MoveInput, player.AimInput, player.Buttons, actionsAllowed,
             controller != null ? controller.NetworkMoveSpeed : PlayerMovementSimulation.MoveSpeed,
             controller != null ? controller.NetworkAcceleration : 18f);
-        position = PlayerMovementSimulation.ConstrainToWorld(previousPosition, position, player.GameObject.GetComponent<CharacterController>());
+        position = player.Motor.Step(position - previousPosition, PlayerMovementSimulation.TickDeltaTime).Position;
         player.GameObject.transform.SetPositionAndRotation(position, Quaternion.Euler(0f, rotationY, 0f));
     }
 
@@ -332,6 +375,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
             float absorbed = Mathf.Min(health.CurrentShield, damage.Amount);
             float applied = Mathf.Min(health.CurrentHealth, damage.Amount - absorbed);
             health.ApplyNetworkState(health.CurrentHealth - applied, health.MaxHealth, health.CurrentShield - absorbed, health.ShieldCapacity);
+            player.Motor.SetBlocking(!health.IsDead);
             if (applied > 0f)
             {
                 player.Action.RollTicks = 0;
@@ -365,6 +409,8 @@ public sealed class ServerPlayerManager : MonoBehaviour
                 EntityId = player.EntityId,
                 OwnerPlayerId = player.PlayerId,
                 Position = player.GameObject.transform.position,
+                VerticalVelocity = player.Motor.State.VerticalVelocity,
+                Grounded = player.Motor.State.Grounded,
                 RotationY = player.GameObject.transform.eulerAngles.y,
                 CurrentHealth = health != null ? health.CurrentHealth : 100f,
                 MoveSpeed = player.Action.MoveDirection.magnitude * (player.GameObject.GetComponent<GrayboxPlayerController>()?.NetworkMoveSpeed ?? PlayerMovementSimulation.MoveSpeed),
@@ -413,6 +459,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
 
     private static void DisableServerGameplay(GameObject playerObject)
     {
+        foreach (Collider collider in playerObject.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
         foreach (MonoBehaviour behaviour in playerObject.GetComponentsInChildren<MonoBehaviour>(true))
         {
             behaviour.enabled = false;
@@ -448,6 +495,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
         public int PlayerId { get; }
         public int EntityId { get; }
         public GameObject GameObject { get; }
+        public NetworkCharacterMotor Motor;
         public readonly Queue<ClientInputMessage> PendingInputs = new Queue<ClientInputMessage>(MaxPendingInputs);
         public uint LastReceivedInputSequence;
         public uint LastProcessedInputSequence;

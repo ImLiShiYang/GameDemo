@@ -10,6 +10,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
     private readonly HashSet<int> reportedUnknownEntityIds = new HashSet<int>();
 
     private GameNetworkClient client;
+    private NetworkCharacterWorld characterWorld;
     private NetworkPrefabCatalog prefabCatalog;
     private GameObject playerTemplate;
     private GameObject remotePlayerTemplate;
@@ -22,6 +23,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
     public bool Initialize(GameNetworkClient networkClient)
     {
         client = networkClient;
+        characterWorld = NetworkCharacterWorld.GetOrCreate(gameObject);
         prefabCatalog = GetComponent<NetworkPrefabCatalog>() ?? gameObject.AddComponent<NetworkPrefabCatalog>();
         prefabCatalog.Initialize();
         GrayboxPlayerController scenePlayer = FindObjectOfType<GrayboxPlayerController>(true);
@@ -75,6 +77,8 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void HandleSnapshot(WorldSnapshotMessage snapshot)
     {
+        // 必须先更新整份权威碰撞世界，再校正本地玩家，不能取正在插值的远程 Transform。
+        characterWorld.ApplySnapshot(snapshot, NetworkRuntime.LocalPlayerEntityId);
         snapshotPlayerIds.Clear();
 
         foreach (PlayerNetworkState state in snapshot.Players)
@@ -261,6 +265,11 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             healthView.Initialize(entity, message.CurrentHealth, message.MaxHealth);
         }
         entities.Add(message.EntityId, entity);
+        if (message.EntityType == NetworkEntityType.Enemy || message.EntityType == NetworkEntityType.Boss)
+        {
+            characterWorld.ApplyProxy(message.EntityId, message.PrefabId, message.Position, message.CurrentHealth > 0f);
+            characterWorld.RefreshContext();
+        }
         NetworkLog.Info($"客户端从对象池创建实体：EntityId {message.EntityId}，Type {message.EntityType}，PrefabId {message.PrefabId}。");
     }
 
@@ -273,6 +282,8 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         }
 
         despawnedEntityTicks[message.EntityId] = serverTick;
+        characterWorld.Remove(message.EntityId);
+        characterWorld.RefreshContext();
         reportedUnknownEntityIds.Remove(message.EntityId);
 
         if (!entities.TryGetValue(message.EntityId, out NetworkEntity entity))
@@ -305,6 +316,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void HandleBattleEvent(BattleEventMessage message, uint serverTick)
     {
+        if (message.EventType == BattleEventType.EntityDied) characterWorld.SetBlocking(message.TargetEntityId, false);
         if (message.EventType == BattleEventType.PlayerSkillCast)
         {
             if (entities.TryGetValue(message.SourceEntityId, out NetworkEntity caster))
@@ -369,6 +381,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private static void DisableClientGameplay(GameObject playerObject)
     {
+        foreach (Collider collider in playerObject.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
         foreach (MonoBehaviour behaviour in playerObject.GetComponentsInChildren<MonoBehaviour>(true))
         {
             if (behaviour is NetworkEntity || behaviour is NetworkTransformInterpolator ||
