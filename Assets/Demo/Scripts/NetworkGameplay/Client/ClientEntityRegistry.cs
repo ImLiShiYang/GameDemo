@@ -102,8 +102,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             }
             else
             {
-                interpolator.ApplyState(state);
-                entity.GetComponent<GrayboxPlayerController>()?.ApplyNetworkMotion(state.Action, state.IsFiring, state.CurrentHealth <= 0f);
+                interpolator.ApplyState(state, snapshot.ServerTick);
             }
         }
 
@@ -138,7 +137,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             else
             {
                 NetworkTransformInterpolator interpolator = entity.GetComponent<NetworkTransformInterpolator>();
-                interpolator?.ApplyState(state);
+                interpolator?.ApplyState(state, snapshot.ServerTick);
                 NetworkEntityHealthView healthView = entity.GetComponent<NetworkEntityHealthView>();
                 healthView?.ApplyHealth(state.CurrentHealth, state.MaxHealth);
             }
@@ -258,7 +257,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
                 entityObject.AddComponent<NetworkTransformInterpolator>();
             interpolator.enabled = true;
             interpolator.Initialize(false);
-            interpolator.ApplySpawn(message);
+            interpolator.ApplySpawn(message, serverTick);
             NetworkEntityHealthView healthView = entityObject.GetComponent<NetworkEntityHealthView>() ??
                 entityObject.AddComponent<NetworkEntityHealthView>();
             healthView.enabled = true;

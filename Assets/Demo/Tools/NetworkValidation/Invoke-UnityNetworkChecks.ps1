@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([ValidateSet('State', 'Compile', 'Physics')][string]$Action = 'Physics')
+param([ValidateSet('State', 'Compile', 'Physics', 'Interpolation')][string]$Action = 'Physics')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
 $bridge = Get-Content (Join-Path $projectRoot '.com-unity-codely.json') -Raw | ConvertFrom-Json
@@ -8,6 +8,7 @@ $command = switch ($Action) {
     'State' { @{type='manage_editor'; params=@{action='get_state'}} }
     'Compile' { @{type='manage_editor'; params=@{action='start_compilation_pipeline'; timeoutSeconds=120}} }
     'Physics' { @{type='execute_csharp_script'; params=@{script='return NetworkCharacterPhysicsChecks.Run();'; execution_mode='editor'; capture_logs=$true}} }
+    'Interpolation' { @{type='execute_csharp_script'; params=@{script='return NetworkSnapshotInterpolationChecks.Run();'; execution_mode='editor'; capture_logs=$true}} }
 }
 $client = [Net.Sockets.TcpClient]::new()
 $client.ReceiveTimeout = 150000
