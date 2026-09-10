@@ -18,8 +18,9 @@ try {
     $responseText = [IO.File]::ReadAllText($response.FullName).Replace('\', '/')
     $extraSources = @(Get-ChildItem (Join-Path $projectRoot 'Assets/Demo/Scripts/NetworkGameplay') -Filter '*.cs' -Recurse |
         ForEach-Object { $_.FullName.Substring($projectRoot.Length + 1).Replace('\', '/') } |
-        Where-Object { -not $responseText.Contains($_) })
-    $compileOutput = & $mono $compiler "@$($response.FullName)" @extraSources '-out:Temp/PlayerMigrationVerify.dll' '-refout:Temp/PlayerMigrationVerify.ref.dll' 2>&1
+        Where-Object { [string]::IsNullOrEmpty($responseText) -or $responseText.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -lt 0 })
+    $compileOutput = & $mono $compiler "@$($response.FullName)" @extraSources '-define:NETWORK_PLAYER_MIGRATION_CHECKS' `
+        '-out:Temp/PlayerMigrationVerify.dll' '-refout:Temp/PlayerMigrationVerify.ref.dll' 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($compileOutput -join [Environment]::NewLine) }
     Write-Output 'Gameplay compilation passed.'
     & $mono $compiler '-noconfig' '-nologo' '-nostdlib+' '-define:NETWORK_PLAYER_MIGRATION_CHECKS' '-out:Temp/NetworkPlayerMigrationChecks.exe' `

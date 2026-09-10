@@ -163,7 +163,8 @@ public sealed class ServerBattleFlow : MonoBehaviour
         Vector3 offset = Quaternion.Euler(0f, angle, 0f) * Vector3.forward * (5f + spawnIndex * 0.7f);
         GameObject enemyObject = new GameObject($"ServerEnemy_W{state.CurrentWave}_{spawnIndex + 1}");
         enemyObject.transform.SetPositionAndRotation(battleOrigin + offset, Quaternion.identity);
-        int entityId = entities.Register(enemyObject, NetworkEntityType.Enemy, NetworkPrefabCatalog.TestEnemyPrefabId, 0,
+        int prefabId = spawnIndex % 2 == 0 ? NetworkPrefabCatalog.TestEnemyPrefabId : NetworkPrefabCatalog.RangedEnemyPrefabId;
+        int entityId = entities.Register(enemyObject, NetworkEntityType.Enemy, prefabId, 0,
             EnemyHealth, EnemyHealth);
 
         if (entityId == 0)

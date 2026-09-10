@@ -7,6 +7,9 @@ using UnityEngine.EventSystems;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.SceneManagement;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 
 /// <summary>
@@ -101,6 +104,19 @@ public sealed class NetworkBootstrap : MonoBehaviour
         NetworkRuntime.ResetSession();
         // 将本进程角色写入全局运行时状态，其他网络组件据此选择行为。
         NetworkRuntime.Role = options.Role;
+
+#if UNITY_EDITOR
+        // 编辑器启动标记必须等 Awake 完成第二次兜底解析后再消费；提前删除会让 Game 窗口退回 Offline。
+        if (NetworkRuntime.IsClient) EditorPrefs.DeleteKey("GameDemo.EditorNetworkClient.Enabled");
+#endif
+
+        if (NetworkRuntime.IsServer)
+        {
+            // -batchmode/-nographics 不会自动关闭 Unity 音频。必须在首场景的 AudioManager.Start 之前全局静音，
+            // 否则服务器仍可能播放登录音乐或由动画事件触发的 2D 音效。
+            AudioListener.pause = true;
+            AudioListener.volume = 0f;
+        }
 
         // 失去窗口焦点时仍让 Unity 主循环运行，否则无法消费网络队列、推进服务器 Tick 或更新远程玩家表现。
         if (!NetworkRuntime.IsOffline)
@@ -330,6 +346,9 @@ public sealed class NetworkBootstrap : MonoBehaviour
             DisableAll<Camera>();
             // 无图形服务器不需要音频监听器。
             DisableAll<AudioListener>();
+            // 服务器只同步玩法事件，声音必须由各客户端本地播放。
+            DisableAll<AudioSource>();
+            DisableAll<GameAudioManager>();
             // 无图形服务器不需要 UI 画布。
             DisableAll<Canvas>();
             // 无图形服务器不需要 UI 事件系统。
@@ -495,6 +514,18 @@ public sealed class NetworkBootstrap : MonoBehaviour
                 result.PlayerName = playerName;
             }
         }
+
+#if UNITY_EDITOR
+        const string editorClientEnabledKey = "GameDemo.EditorNetworkClient.Enabled";
+        if (result.Role == NetworkRole.Offline && EditorPrefs.GetBool(editorClientEnabledKey, false))
+        {
+            result.Role = NetworkRole.Client;
+            result.PlayerId = EditorPrefs.GetInt("GameDemo.EditorNetworkClient.PlayerId", 1);
+            result.ServerPort = EditorPrefs.GetInt("GameDemo.EditorNetworkClient.ServerPort", NetworkRuntime.DefaultServerPort);
+            result.ServerAddress = EditorPrefs.GetString("GameDemo.EditorNetworkClient.ServerAddress", NetworkRuntime.DefaultServerAddress);
+            result.PlayerName = $"Editor Player {result.PlayerId}";
+        }
+#endif
 
         // 未明确指定 PlayerId 的客户端默认申请 1 号席位，保证基本启动参数可用。
         if (result.Role == NetworkRole.Client && result.PlayerId == 0)

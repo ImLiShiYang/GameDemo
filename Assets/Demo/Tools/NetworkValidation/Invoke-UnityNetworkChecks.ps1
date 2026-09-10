@@ -1,5 +1,10 @@
 [CmdletBinding()]
-param([ValidateSet('State', 'Compile', 'Physics', 'Interpolation')][string]$Action = 'Physics')
+param(
+    [ValidateSet('State', 'Compile', 'Physics', 'Interpolation', 'EnemyCombat', 'BuildClient', 'StartEditorClient', 'StopEditorClient')]
+    [string]$Action = 'Physics',
+    [ValidateRange(1, 2)][int]$PlayerId = 1,
+    [ValidateRange(1, 65535)][int]$ServerPort = 7777
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
 $bridge = Get-Content (Join-Path $projectRoot '.com-unity-codely.json') -Raw | ConvertFrom-Json
@@ -9,6 +14,10 @@ $command = switch ($Action) {
     'Compile' { @{type='manage_editor'; params=@{action='start_compilation_pipeline'; timeoutSeconds=120}} }
     'Physics' { @{type='execute_csharp_script'; params=@{script='return NetworkCharacterPhysicsChecks.Run();'; execution_mode='editor'; capture_logs=$true}} }
     'Interpolation' { @{type='execute_csharp_script'; params=@{script='return NetworkSnapshotInterpolationChecks.Run();'; execution_mode='editor'; capture_logs=$true}} }
+    'EnemyCombat' { @{type='execute_csharp_script'; params=@{script='return NetworkEnemyCombatChecks.Run();'; execution_mode='editor'; capture_logs=$true}} }
+    'BuildClient' { @{type='execute_csharp_script'; params=@{script='return NetworkWindowsClientBuilder.BuildDefault();'; execution_mode='editor'; capture_logs=$true}} }
+    'StartEditorClient' { @{type='execute_csharp_script'; params=@{script="return EditorNetworkClientLauncher.Start($PlayerId, `"127.0.0.1`", $ServerPort);"; execution_mode='editor'; capture_logs=$true}} }
+    'StopEditorClient' { @{type='manage_editor'; params=@{action='stop'}} }
 }
 $client = [Net.Sockets.TcpClient]::new()
 $client.ReceiveTimeout = 150000

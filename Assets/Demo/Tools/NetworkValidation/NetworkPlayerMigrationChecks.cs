@@ -13,6 +13,7 @@ public static class NetworkPlayerMigrationChecks
         try
         {
             CheckRoll();
+            CheckHit();
             CheckReplay();
             CheckRestrictions();
             CheckProtocol();
@@ -31,15 +32,23 @@ public static class NetworkPlayerMigrationChecks
         Vector3 position = Vector3.zero;
         float rotation = 0f;
         PlayerActionState action = default;
+        float firstStep = 0f;
+        float largestStep = 0f;
         for (int tick = 0; tick < PlayerMovementSimulation.RollDurationTicks; tick++)
         {
+            float before = position.x;
             PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.right, Vector2.up,
                 tick == 0 ? ClientInputButtons.Roll : ClientInputButtons.None, true);
+            float step = position.x - before;
+            if (tick == 0) firstStep = step;
+            largestStep = Math.Max(largestStep, step);
             Assert(action.IsRolling && action.IsInvincible, "Roll/invulnerability must remain active for the configured ticks");
         }
         Near(position.x, PlayerMovementSimulation.RollDistance, "Roll distance");
         Near(position.z, 0f, "Movement input takes priority over aim for roll direction");
         Near(rotation, 90f, "Roll heading");
+        Assert(action.RollSequence == 1, "Roll sequence increments exactly once");
+        Assert(largestStep > firstStep * 2f, "Roll uses a non-linear authored distance curve");
         PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.zero, Vector2.up, ClientInputButtons.None, true);
         Assert(!action.IsRolling && !action.IsInvincible, "Roll ends without an animation event");
         Vector3 stopped = position;
@@ -55,6 +64,29 @@ public static class NetworkPlayerMigrationChecks
         position = Vector3.zero;
         PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.one, Vector2.up, ClientInputButtons.None, true, PlayerMovementSimulation.MoveSpeed, 100f);
         Near(position.magnitude, PlayerMovementSimulation.MoveSpeed * PlayerMovementSimulation.TickDeltaTime, "Diagonal speed is clamped");
+    }
+
+    private static void CheckHit()
+    {
+        Vector3 position = Vector3.zero;
+        float rotation = 0f;
+        PlayerActionState action = default;
+        PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.right, Vector2.up, ClientInputButtons.Roll, true, 10);
+        PlayerMovementSimulation.ApplyHit(ref action, Vector2.left, PlayerHitKind.Normal);
+        Vector3 normalHitStart = position;
+        Assert(!action.IsRolling && action.HitSequence == 1 && action.HitStunTicks == 3, "Hit deterministically interrupts roll once");
+        for (int tick = 0; tick < 3; tick++)
+            PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.right, Vector2.up, ClientInputButtons.None, true);
+        Assert(action.HitStunTicks == 0 && position == normalHitStart, "Normal hit locks input for three ticks without displacement");
+        Vector3 heavyStart = position;
+        PlayerMovementSimulation.ApplyHit(ref action, Vector2.left, PlayerHitKind.Heavy);
+        for (int tick = 0; tick < PlayerMovementSimulation.HeavyHitTicks; tick++)
+            PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.zero, Vector2.up, ClientInputButtons.None, true);
+        Near(Vector3.Distance(position, heavyStart), PlayerMovementSimulation.HeavyHitDistance, "Heavy hit authoritative displacement");
+        Assert(action.HitSequence == 2 && action.HitKind == PlayerHitKind.Heavy, "Heavy hit sequence is not replayed by animation");
+        PlayerMovementSimulation.ApplyHit(ref action, Vector2.down, PlayerHitKind.Lethal);
+        Assert(action.HitStunTicks == Mathf.CeilToInt(PlayerMovementSimulation.DeathImpactDuration / PlayerMovementSimulation.TickDeltaTime),
+            "Lethal hit preserves the configured impact freeze before death");
     }
 
     private static void CheckReplay()
@@ -91,9 +123,9 @@ public static class NetworkPlayerMigrationChecks
         PlayerActionState action = default;
         PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.up, Vector2.up, ClientInputButtons.Roll, false);
         Assert(!action.IsRolling && position == Vector3.zero, "Dead/disabled battle state cannot roll or move");
-        action.HitStunTicks = 8;
+        action.HitStunTicks = PlayerMovementSimulation.NormalHitStunTicks;
         PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.up, Vector2.up, ClientInputButtons.Roll, true);
-        Assert(!action.IsRolling && position == Vector3.zero && action.HitStunTicks == 7, "Hit stun blocks input and advances deterministically");
+        Assert(!action.IsRolling && position == Vector3.zero && action.HitStunTicks == 2, "Hit stun blocks input and advances deterministically");
         action = new PlayerActionState { RollCooldownTicks = 5 };
         PlayerMovementSimulation.Step(ref position, ref rotation, ref action, Vector2.zero, Vector2.up, ClientInputButtons.Roll, true);
         Assert(!action.IsRolling, "Roll cooldown is enforced");
@@ -115,7 +147,11 @@ public static class NetworkPlayerMigrationChecks
             CurrentHealth = 80f, MaxHealth = 100f, Shield = 10f, ShieldCapacity = 25f,
             VerticalVelocity = -2f, Grounded = true,
             Skill1Cooldown = 4.5f, Skill2Cooldown = 2f, IsFiring = true, LastProcessedInputSequence = 12,
-            Action = new PlayerActionState { RollTicks = 10, RollCooldownTicks = 3, HitStunTicks = 0, RollDirection = Vector2.right, MoveDirection = Vector2.up }
+            Action = new PlayerActionState
+            {
+                RollTicks = 10, RollCooldownTicks = 3, HitStunTicks = 0, RollDirection = Vector2.right, MoveDirection = Vector2.up,
+                RollSequence = 4, RollStartTick = 33, HitSequence = 7, HitDirection = Vector2.left, HitKind = PlayerHitKind.Heavy
+            }
         };
         snapshot.Players.Add(player);
         PlayerNetworkState decoded = NetworkProtocol.DeserializeWorldSnapshot(NetworkProtocol.Serialize(snapshot)).Players[0];
@@ -129,6 +165,9 @@ public static class NetworkPlayerMigrationChecks
         player.VerticalVelocity = -2f;
         Assert(decoded.Action.RollTicks == 10 && decoded.Action.RollDirection == Vector2.right && decoded.Action.MoveDirection == Vector2.up,
             "Snapshot includes complete replay action state");
+        Assert(decoded.Action.RollSequence == 4 && decoded.Action.RollStartTick == 33 && decoded.Action.HitSequence == 7 &&
+            decoded.Action.HitDirection == Vector2.left && decoded.Action.HitKind == PlayerHitKind.Heavy,
+            "Snapshot preserves deduplicated roll and hit presentation state");
         Assert(decoded.Shield == 10f && decoded.MaxHealth == 100f && decoded.IsFiring && decoded.Skill1Cooldown == 4.5f && decoded.Skill2Cooldown == 2f,
             "Snapshot preserves health, firing and independent cooldowns");
         BattleEventMessage skill = new BattleEventMessage
@@ -146,7 +185,7 @@ public static class NetworkPlayerMigrationChecks
         Reject(() => NetworkProtocol.Serialize(snapshot), "Non-finite cooldown rejected");
         skill.SkillSlot = 3;
         Reject(() => NetworkProtocol.Serialize(skill), "Unknown skill slot rejected");
-        Assert(NetworkPacketHeader.CurrentProtocolVersion == 7, "Protocol version bumped for incompatible payload changes");
+        Assert(NetworkPacketHeader.CurrentProtocolVersion == 9, "Protocol version bumped for incompatible payload changes");
     }
 
     private static void Reject(Action action, string message)

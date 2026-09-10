@@ -3,12 +3,14 @@ using UnityEngine;
 
 /// <summary>
 /// 把服务器下发的稳定 PrefabId 映射为客户端表现对象池。
-/// 固定映射：1 为玩家，10 为普通敌人，100 为 Boss，200 为客户端纯表现子弹。
+/// 固定映射：1 为玩家，10/11 为近战/远程敌人，100 为 Boss，200/201 为玩家/敌人子弹。
 /// </summary>
 public sealed class NetworkPrefabCatalog : MonoBehaviour
 {
     public const int PlayerPrefabId = 1;
     public const int TestEnemyPrefabId = 10;
+    public const int RangedEnemyPrefabId = 11;
+    public const int EnemyProjectilePrefabId = 201;
     public const int BossPrefabId = 100;
     public const int ProjectilePrefabId = 200;
 
@@ -26,8 +28,12 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
         initialized = true;
         poolRoot = new GameObject("Network Entity Pool").transform;
         poolRoot.SetParent(transform, false);
-        RegisterRuntimeTestEnemy();
-        RegisterRuntimeBoss();
+        NetworkEnemyPrefabs assets = Resources.Load<NetworkEnemyPrefabs>("NetworkEnemyPrefabs");
+        if (assets == null) throw new System.InvalidOperationException("缺少 Resources/NetworkEnemyPrefabs。");
+        RegisterPrefab(assets.Melee, TestEnemyPrefabId, 4, 32);
+        RegisterPrefab(assets.Ranged, RangedEnemyPrefabId, 4, 32);
+        RegisterPrefab(assets.Boss, BossPrefabId, 1, 2);
+        RegisterPrefab(assets.Projectile, EnemyProjectilePrefabId, 8, 64);
         RegisterRuntimeProjectile();
     }
 
@@ -60,29 +66,38 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
         Destroy(instance);
     }
 
-    private void RegisterRuntimeTestEnemy()
+    private void RegisterPrefab(GameObject prefab, int id, int initialSize, int maxSize)
     {
-        GameObject template = CreateCharacterTemplate("NetworkTestEnemy_Prefab10", TestEnemyPrefabId, new Vector3(0.9f, 1.2f, 0.9f));
-        template.transform.SetParent(poolRoot, false);
-
-        Renderer visual = template.GetComponentInChildren<Renderer>();
-
-        if (visual != null)
-        {
-            visual.material.color = new Color(0.85f, 0.12f, 0.12f, 1f);
-        }
-
-        Collider collider = template.GetComponent<Collider>();
-
-        if (collider != null)
-        {
-            collider.enabled = false;
-        }
-
+        if (prefab == null) throw new System.InvalidOperationException($"缺少敌人 PrefabId {id} 的预制体。");
+        // 在非激活父节点下复制，先关闭单机逻辑，再允许 Unity 激活实例。
+        GameObject staging = new GameObject("Inactive staging");
+        staging.transform.SetParent(poolRoot, false);
+        staging.SetActive(false);
+        GameObject template = Instantiate(prefab, staging.transform);
+        template.name = $"Network_{prefab.name}_{id}";
         template.SetActive(false);
-        Transform storageRoot = new GameObject("Prefab 10 - Test Enemy").transform;
-        storageRoot.SetParent(poolRoot, false);
-        pools.Add(TestEnemyPrefabId, new GameObjectPool(template, storageRoot, 2, 16));
+        foreach (MonoBehaviour component in template.GetComponentsInChildren<MonoBehaviour>(true)) component.enabled = false;
+        foreach (Collider component in template.GetComponentsInChildren<Collider>(true)) component.enabled = false;
+        foreach (UnityEngine.AI.NavMeshAgent component in template.GetComponentsInChildren<UnityEngine.AI.NavMeshAgent>(true)) component.enabled = false;
+        foreach (Rigidbody body in template.GetComponentsInChildren<Rigidbody>(true)) { body.isKinematic = true; body.detectCollisions = false; }
+        foreach (Canvas canvas in template.GetComponentsInChildren<Canvas>(true)) canvas.gameObject.SetActive(false);
+        foreach (UnityEngine.Rendering.Universal.DecalProjector decal in template.GetComponentsInChildren<UnityEngine.Rendering.Universal.DecalProjector>(true)) decal.enabled = false;
+        foreach (Animator animator in template.GetComponentsInChildren<Animator>(true))
+        {
+            animator.applyRootMotion = false;
+            animator.fireEvents = false;
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        }
+        template.transform.SetParent(poolRoot, false);
+        if (Application.isPlaying) Destroy(staging);
+        else DestroyImmediate(staging);
+        Transform storage = new GameObject($"Prefab {id} - {prefab.name}").transform;
+        storage.SetParent(poolRoot, false);
+        pools.Add(id, new GameObjectPool(template, storage, initialSize, maxSize, instance =>
+        {
+            foreach (Animator animator in instance.GetComponentsInChildren<Animator>(true)) { animator.Rebind(); animator.Update(0f); }
+            foreach (ParticleSystem particles in instance.GetComponentsInChildren<ParticleSystem>(true)) { particles.Clear(); particles.Play(); }
+        }));
     }
 
     private void RegisterRuntimeProjectile()
@@ -96,7 +111,8 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
 
         if (visual != null)
         {
-            visual.material.color = new Color(1f, 0.65f, 0.08f, 1f);
+            visual.sharedMaterial = new Material(visual.sharedMaterial);
+            visual.sharedMaterial.color = new Color(1f, 0.65f, 0.08f, 1f);
         }
 
         Collider collider = template.GetComponent<Collider>();
@@ -112,40 +128,4 @@ public sealed class NetworkPrefabCatalog : MonoBehaviour
         pools.Add(ProjectilePrefabId, new GameObjectPool(template, storageRoot, 8, 64));
     }
 
-    private void RegisterRuntimeBoss()
-    {
-        GameObject template = CreateCharacterTemplate("NetworkBoss_Prefab100", BossPrefabId, new Vector3(1.8f, 2.2f, 1.8f));
-        template.transform.SetParent(poolRoot, false);
-
-        Renderer visual = template.GetComponentInChildren<Renderer>();
-
-        if (visual != null)
-        {
-            visual.material.color = new Color(0.42f, 0.08f, 0.72f, 1f);
-        }
-
-        Collider collider = template.GetComponent<Collider>();
-
-        if (collider != null)
-        {
-            collider.enabled = false;
-        }
-
-        template.SetActive(false);
-        Transform storageRoot = new GameObject("Prefab 100 - Boss").transform;
-        storageRoot.SetParent(poolRoot, false);
-        pools.Add(BossPrefabId, new GameObjectPool(template, storageRoot, 1, 2));
-    }
-
-    private static GameObject CreateCharacterTemplate(string name, int prefabId, Vector3 scale)
-    {
-        GameObject root = new GameObject(name);
-        GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        visual.name = "Visual";
-        visual.transform.SetParent(root.transform, false);
-        visual.transform.localPosition = Vector3.up * (NetworkCharacterShape.ForPrefab(prefabId).Height * 0.5f);
-        visual.transform.localScale = scale;
-        visual.GetComponent<Collider>().enabled = false;
-        return root;
-    }
 }

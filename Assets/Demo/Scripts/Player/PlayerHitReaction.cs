@@ -25,13 +25,8 @@ public class PlayerHitReaction : MonoBehaviour
 
     private void OnDamaged(DamageInfo damageInfo)
     {
-        // 这一击已经把玩家打死了，
-        // 不再播放普通受击动画，交给死亡动画处理。
-        if (health.CurrentHealth <= 0f)
-        {
-            return;
-        }
-
-        playerController.PlayHitReaction();
+        PlayerHitKind kind = health.CurrentHealth <= 0f ? PlayerHitKind.Lethal :
+            damageInfo.InterruptPower > 0 ? PlayerHitKind.Heavy : PlayerHitKind.Normal;
+        playerController.PlayHitReaction(damageInfo.HitDirection, kind);
     }
 }

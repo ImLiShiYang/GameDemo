@@ -256,6 +256,12 @@ public static class NetworkProtocol
                 writer.Write(player.Action.RollDirection.y);
                 writer.Write(player.Action.MoveDirection.x);
                 writer.Write(player.Action.MoveDirection.y);
+                writer.Write(player.Action.RollSequence);
+                writer.Write(player.Action.RollStartTick);
+                writer.Write(player.Action.HitSequence);
+                writer.Write(player.Action.HitDirection.x);
+                writer.Write(player.Action.HitDirection.y);
+                writer.Write((byte)player.Action.HitKind);
                 writer.Write(player.MaxHealth);
                 writer.Write(player.Shield);
                 writer.Write(player.ShieldCapacity);
@@ -332,7 +338,12 @@ public static class NetworkProtocol
                         RollCooldownTicks = reader.ReadInt32(),
                         HitStunTicks = reader.ReadInt32(),
                         RollDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
-                        MoveDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle())
+                        MoveDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
+                        RollSequence = reader.ReadUInt32(),
+                        RollStartTick = reader.ReadUInt32(),
+                        HitSequence = reader.ReadUInt32(),
+                        HitDirection = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
+                        HitKind = (PlayerHitKind)reader.ReadByte()
                     },
                     MaxHealth = reader.ReadSingle(),
                     Shield = reader.ReadSingle(),
@@ -465,10 +476,15 @@ public static class NetworkProtocol
         ValidateFinite(player.Action.RollDirection.y, "RollDirection.y");
         ValidateFinite(player.Action.MoveDirection.x, "MoveDirection.x");
         ValidateFinite(player.Action.MoveDirection.y, "MoveDirection.y");
+        ValidateFinite(player.Action.HitDirection.x, "HitDirection.x");
+        ValidateFinite(player.Action.HitDirection.y, "HitDirection.y");
         if (player.Action.RollTicks < 0 || player.Action.RollTicks > PlayerMovementSimulation.RollDurationTicks ||
-            player.Action.RollCooldownTicks < 0 || player.Action.HitStunTicks < 0 || player.MaxHealth <= 0f ||
+            player.Action.RollCooldownTicks < 0 ||
+            player.Action.RollCooldownTicks > PlayerMovementSimulation.RollDurationTicks + PlayerMovementSimulation.RollCooldownTicks ||
+            player.Action.HitStunTicks < 0 || player.Action.HitStunTicks > PlayerMovementSimulation.HeavyHitTicks || player.MaxHealth <= 0f ||
             player.CurrentHealth < 0f || player.CurrentHealth > player.MaxHealth || player.Shield < 0f ||
-            player.Shield > player.ShieldCapacity || player.Skill1Cooldown < 0f || player.Skill2Cooldown < 0f)
+            player.Shield > player.ShieldCapacity || player.Skill1Cooldown < 0f || player.Skill2Cooldown < 0f ||
+            (byte)player.Action.HitKind > (byte)PlayerHitKind.Lethal)
         {
             throw new InvalidDataException("玩家动作或生命状态无效。");
         }
@@ -539,6 +555,12 @@ public static class NetworkProtocol
         {
             ValidateEntityId(message.SourceEntityId);
             ValidateEntityId(message.TargetEntityId);
+        }
+
+        if ((message.EventType == BattleEventType.EnemyAttackStarted || message.EventType == BattleEventType.EnemyAttackStopped) &&
+            (message.SourceEntityId <= 0 || message.SkillSlot < 3 || message.SkillSlot > 6 || message.Range < 0f || message.Duration < 0f))
+        {
+            throw new InvalidDataException("敌人攻击事件无效。");
         }
 
         if (message.SourceEntityId < 0 || message.TargetEntityId < 0)

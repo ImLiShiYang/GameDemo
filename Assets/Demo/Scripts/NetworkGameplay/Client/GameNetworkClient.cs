@@ -379,7 +379,8 @@ public sealed class GameNetworkClient : MonoBehaviour
         }
         catch (Exception exception)
         {
-            NetworkLog.Error($"客户端处理消息失败：{exception.Message}");
+            // 保留完整异常类型和调用栈；只记录 Message 会把实体表现层错误伪装成无法定位的协议断线。
+            NetworkLog.Error($"客户端处理消息失败：{exception}");
             Disconnect();
         }
     }

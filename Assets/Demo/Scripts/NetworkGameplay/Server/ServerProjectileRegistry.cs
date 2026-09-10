@@ -24,7 +24,7 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
     }
 
     public int SpawnPlayerProjectile(int ownerPlayerId, int ownerEntityId, Vector3 origin, Vector3 direction,
-        float damage = 10f, int pierceCount = 0, float speed = 15f, float lifetime = 3f)
+        float damage = 10f, int pierceCount = 0, float speed = 15f, float lifetime = 3f, int targetPlayerEntityId = 0)
     {
         if (direction.sqrMagnitude < 0.0001f)
         {
@@ -36,7 +36,8 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         GameObject projectileObject = new GameObject($"ServerProjectile_Player{ownerPlayerId}");
         projectileObject.transform.SetPositionAndRotation(origin, Quaternion.LookRotation(direction, Vector3.up));
         int entityId = entityRegistry.Register(projectileObject, NetworkEntityType.Projectile,
-            NetworkPrefabCatalog.ProjectilePrefabId, ownerPlayerId, 0f, 0f, velocity, server.ServerTick);
+            targetPlayerEntityId == 0 ? NetworkPrefabCatalog.ProjectilePrefabId : NetworkPrefabCatalog.EnemyProjectilePrefabId,
+            ownerPlayerId, 0f, 0f, velocity, server.ServerTick);
 
         if (entityId == 0)
         {
@@ -48,6 +49,7 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         {
             EntityId = entityId,
             SourceEntityId = ownerEntityId,
+            TargetPlayerEntityId = targetPlayerEntityId,
             GameObject = projectileObject,
             Velocity = velocity,
             ExpireTick = server.ServerTick + (uint)Mathf.Max(1, Mathf.CeilToInt(lifetime * NetworkRuntime.DefaultTickRate)),
@@ -56,6 +58,11 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
         });
         NetworkLog.Info($"服务器生成权威子弹：EntityId {entityId}，Owner Player {ownerPlayerId}，Velocity {velocity}。");
         return entityId;
+    }
+
+    public int SpawnEnemyProjectile(int sourceEntityId, int targetEntityId, Vector3 origin, Vector3 direction, float damage)
+    {
+        return SpawnPlayerProjectile(0, sourceEntityId, origin, direction, damage, 0, 8f, 4f, targetEntityId);
     }
 
     public void SimulateTick(uint serverTick, float tickDeltaTime)
@@ -77,10 +84,25 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
             }
 
             Vector3 start = projectile.GameObject.transform.position;
+            ServerPlayerManager players = server.GetComponent<ServerPlayerManager>();
+            if (projectile.TargetPlayerEntityId != 0 && players.TryGetAlivePlayer(projectile.TargetPlayerEntityId, out Transform target))
+            {
+                Vector3 desired = (target.position + Vector3.up - start).normalized * projectile.Velocity.magnitude;
+                projectile.Velocity = Vector3.RotateTowards(projectile.Velocity, desired, 1.5f * tickDeltaTime, 0f);
+            }
             Vector3 end = start + projectile.Velocity * tickDeltaTime;
             bool worldHit = TryFindWorldHit(start, end, out Vector3 worldHitPoint, out float worldHitDistance);
             bool consumed = false;
-            while (entityRegistry.TryFindProjectileTarget(start, end, ProjectileRadius, projectile.SourceEntityId,
+            if (projectile.TargetPlayerEntityId != 0 && players.TryFindProjectileTarget(start, end, ProjectileRadius,
+                out int playerId, out Vector3 playerHit, out float playerDistance) && (!worldHit || playerDistance <= worldHitDistance))
+            {
+                // 来源可能已经死亡；伤害仍由这颗已发射的权威子弹结算。
+                players.ApplyPlayerDamage(playerId, new DamageInfo(projectile.Damage, projectile.GameObject, playerHit,
+                    projectile.Velocity.normalized, Vector3.up), projectile.SourceEntityId);
+                projectile.GameObject.transform.position = playerHit;
+                consumed = true;
+            }
+            while (projectile.TargetPlayerEntityId == 0 && entityRegistry.TryFindProjectileTarget(start, end, ProjectileRadius, projectile.SourceEntityId,
                 out int targetEntityId, out Vector3 entityHitPoint, out float entityHitDistance, projectile.HitTargets))
             {
                 if (worldHit && worldHitDistance < entityHitDistance) break;
@@ -146,6 +168,7 @@ public sealed class ServerProjectileRegistry : MonoBehaviour
     {
         public int EntityId;
         public int SourceEntityId;
+        public int TargetPlayerEntityId;
         public GameObject GameObject;
         public Vector3 Velocity;
         public uint ExpireTick;

@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 [RequireComponent(typeof(Health))]
@@ -15,6 +16,7 @@ public class PlayerDeathController : MonoBehaviour
 
     private Health health;
     private bool isDead;
+    private Coroutine deathRoutine;
 
     private static readonly int DeadHash =
         Animator.StringToHash("Dead");
@@ -76,6 +78,14 @@ public class PlayerDeathController : MonoBehaviour
 
         isDead = true;
 
+        deathRoutine = StartCoroutine(PlayDeathAfterImpact());
+    }
+
+    private IEnumerator PlayDeathAfterImpact()
+    {
+        yield return new WaitForSecondsRealtime(PlayerMotionProfile.Runtime.DeathImpactDuration);
+        deathRoutine = null;
+
         if (animator != null)
         {
             // 清除正在播放或等待播放的其他动作。
@@ -85,15 +95,14 @@ public class PlayerDeathController : MonoBehaviour
             animator.SetFloat(MoveXHash, 0f);
             animator.SetFloat(MoveYHash, 0f);
 
-            // 进入死亡状态。
+            animator.applyRootMotion = true;
             animator.SetBool(DeadHash, true);
         }
 
         // 死亡后禁止玩家继续移动、瞄准和翻滚。
         if (playerController != null)
         {
-            // 禁用控制器前先关闭 IK，并把枪挂到右手骨骼下，
-            // 让枪在死亡动画中继续跟随右手。
+            // 禁用控制器前先关闭 IK，并让武器随右手骨骼播放死亡动画。
             playerController.EnterDeathWeaponState();
             playerController.enabled = false;
         }
@@ -112,5 +121,10 @@ public class PlayerDeathController : MonoBehaviour
         {
             aimLine.enabled = false;
         }
+    }
+
+    private void OnDestroy()
+    {
+        if (deathRoutine != null) StopCoroutine(deathRoutine);
     }
 }

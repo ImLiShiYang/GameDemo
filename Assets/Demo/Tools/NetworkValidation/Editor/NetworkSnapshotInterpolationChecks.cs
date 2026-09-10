@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Animations.Rigging;
 
 public static class NetworkSnapshotInterpolationChecks
 {
@@ -135,12 +137,14 @@ public static class NetworkSnapshotInterpolationChecks
             Check(interpolator.BufferedSnapshotCount == 0, "Reinitialization clears the timeline");
 
             // 恢复包抵达的第一帧保持外推后的画面位置，随后把误差快速、平滑地衰减掉。
-            interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.zero, MoveSpeed = 10f, CurrentHealth = 100f }, 100);
-            interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.right, MoveSpeed = 10f, CurrentHealth = 100f }, 102);
+            const float isolatedY = 50f;
+            interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.up * isolatedY, MoveSpeed = 10f, CurrentHealth = 100f }, 100);
+            interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.up * isolatedY + Vector3.right, MoveSpeed = 10f, CurrentHealth = 100f }, 102);
             interpolator.TickRemotePresentation(1f);
             float extrapolatedX = view.transform.position.x;
-            Check(interpolator.IsExtrapolating && extrapolatedX > 1.99f && extrapolatedX < 2.01f, "Remote view renders bounded extrapolated pose");
-            interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.right * 1.2f, MoveSpeed = 2f, CurrentHealth = 100f }, 104);
+            Check(interpolator.IsExtrapolating && extrapolatedX > 1.99f && extrapolatedX < 2.01f,
+                $"Remote view renders bounded extrapolated pose (actual {extrapolatedX:0.000})");
+            interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.up * isolatedY + Vector3.right * 1.2f, MoveSpeed = 2f, CurrentHealth = 100f }, 104);
             interpolator.TickRemotePresentation(0f);
             Check(Mathf.Abs(view.transform.position.x - extrapolatedX) < 0.01f, "Recovery snapshot does not cause an immediate visual snap");
             for (int i = 0; i < 20; i++) interpolator.TickRemotePresentation(0.016f);
@@ -151,18 +155,82 @@ public static class NetworkSnapshotInterpolationChecks
             try
             {
                 wall.name = "Snapshot extrapolation test wall";
-                wall.transform.SetPositionAndRotation(new Vector3(1.2f, 1f, 0f), Quaternion.identity);
+                wall.transform.SetPositionAndRotation(new Vector3(1.2f, isolatedY + 1f, 0f), Quaternion.identity);
                 wall.transform.localScale = new Vector3(0.1f, 2f, 4f);
                 Physics.SyncTransforms();
                 interpolator.Initialize(false);
-                interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.zero, MoveSpeed = 5f, CurrentHealth = 100f }, 200);
-                interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.right * 0.5f, MoveSpeed = 5f, CurrentHealth = 100f }, 202);
+                interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.up * isolatedY, MoveSpeed = 5f, CurrentHealth = 100f }, 200);
+                interpolator.ApplyState(new PlayerNetworkState { Position = Vector3.up * isolatedY + Vector3.right * 0.5f, MoveSpeed = 5f, CurrentHealth = 100f }, 202);
                 interpolator.TickRemotePresentation(1f);
                 Check(view.transform.position.x > 0.5f && view.transform.position.x < 0.9f, "Extrapolated view stops before static wall");
             }
             finally { UnityEngine.Object.DestroyImmediate(wall); }
         }
         finally { UnityEngine.Object.DestroyImmediate(view); }
+
+        GameObject smoothRoot = new GameObject("Local presentation smoothing test");
+        GameObject smoothModel = new GameObject("Model");
+        try
+        {
+            smoothModel.transform.SetParent(smoothRoot.transform, false);
+            PlayerPresentationDriver driver = smoothRoot.AddComponent<PlayerPresentationDriver>();
+            driver.Initialize(true, smoothModel.transform);
+            driver.SetPredictedPose(Vector3.right * 0.5f, Quaternion.identity, Vector3.zero, false);
+            Check(smoothRoot.transform.position.x == 0.5f && driver.VisualRoot.position.x < 0.01f,
+                "Local simulation root advances immediately while VisualRoot preserves the previous frame");
+            driver.TickPresentation(1f / 60f);
+            Check(driver.VisualRoot.position.x > 0f && driver.VisualRoot.position.x < 0.5f,
+                "VisualRoot removes a 20 Hz step continuously at render rate");
+            for (int i = 0; i < 30; i++) driver.TickPresentation(1f / 60f);
+            Check(Mathf.Abs(driver.VisualRoot.position.x - 0.5f) < 0.002f && driver.CameraAnchor.IsChildOf(driver.VisualRoot),
+                "VisualRoot converges and CameraAnchor follows the smoothed pose");
+            driver.SetPredictedPose(Vector3.right * 2f, Quaternion.identity, Vector3.zero, false);
+            Check(Mathf.Abs(driver.VisualRoot.position.x - 2f) < 0.001f, "Corrections over one metre hard-snap");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(smoothRoot); }
+
+        GameObject controllerRoot = new GameObject("Network roll IK test");
+        GameObject defaultSocketParent = new GameObject("Weapon socket parent");
+        GameObject weapon = new GameObject("Weapon");
+        GameObject weaponAimPivot = new GameObject("Weapon aim pivot");
+        GameObject rightHand = new GameObject("Right hand");
+        GameObject rigObject = new GameObject("AimRig");
+        try
+        {
+            defaultSocketParent.transform.SetParent(controllerRoot.transform, false);
+            weapon.transform.SetParent(defaultSocketParent.transform, false);
+            weaponAimPivot.transform.SetParent(weapon.transform, false);
+            rightHand.transform.SetParent(controllerRoot.transform, false);
+            rigObject.transform.SetParent(controllerRoot.transform, false);
+            Rig rig = rigObject.AddComponent<Rig>();
+            rig.weight = 1f;
+            GrayboxPlayerController controller = controllerRoot.AddComponent<GrayboxPlayerController>();
+            SetField(controller, "aimRig", rig);
+            SetField(controller, "weaponSocket", weapon.transform);
+            SetField(controller, "rightHandBone", rightHand.transform);
+            SetField(controller, "weaponSocketDefaultParent", defaultSocketParent.transform);
+            SetField(controller, "weaponSocketDefaultLocalPosition", Vector3.zero);
+            SetField(controller, "weaponSocketDefaultLocalRotation", Quaternion.identity);
+            SetField(controller, "weaponSocketDefaultLocalScale", Vector3.one);
+            SetField(controller, "weaponAimPivot", weaponAimPivot.transform);
+            SetField(controller, "weaponAimPivotDefaultLocalRotation", Quaternion.identity);
+            controller.ConfigureNetworkView(true);
+            weaponAimPivot.transform.localRotation = Quaternion.Euler(0f, 73f, 0f);
+            controller.ApplyNetworkMotion(new PlayerActionState { RollTicks = 15, RollSequence = 1, RollStartTick = 10 }, false, false);
+            Check(rig.weight == 0f && weapon.transform.parent == rightHand.transform,
+                "Network roll immediately disables AimRig and hands the weapon to the animation");
+            controller.ApplyNetworkMotion(new PlayerActionState { RollSequence = 1, RollStartTick = 10 }, false, false);
+            Check(weapon.transform.parent == defaultSocketParent.transform && weaponAimPivot.transform.localRotation == Quaternion.identity,
+                "Network roll completion restores the weapon socket and aim pivot");
+            rig.weight = 1f;
+            controller.ApplyNetworkMotion(new PlayerActionState { HitSequence = 1, HitStunTicks = 3 }, false, false);
+            Check(rig.weight == 0f && weapon.transform.parent == rightHand.transform,
+                "Network hit immediately disables AimRig and hands the weapon to the animation");
+            controller.ApplyNetworkMotion(new PlayerActionState { HitSequence = 1 }, false, false);
+            Check(weapon.transform.parent == defaultSocketParent.transform,
+                "Network hit completion restores the weapon socket");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(controllerRoot); }
         string result = "PASS: " + results.Count + " snapshot interpolation checks\n" + string.Join("\n", results);
         File.WriteAllText("Temp/NetworkSnapshotInterpolationChecks.txt", result);
         return result;
@@ -194,5 +262,12 @@ public static class NetworkSnapshotInterpolationChecks
             monotonic &= buffer.PlaybackTime >= before;
         }
         return sample.Position.x;
+    }
+
+    private static void SetField(object target, string name, object value)
+    {
+        FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field == null) throw new MissingFieldException(target.GetType().Name, name);
+        field.SetValue(target, value);
     }
 }

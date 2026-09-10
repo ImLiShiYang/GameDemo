@@ -10,7 +10,7 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
     private static readonly int HitHash = Animator.StringToHash("Hit");
     private static readonly int DeadHash = Animator.StringToHash("Dead");
 
-    private readonly MaterialPropertyBlock propertyBlock = new MaterialPropertyBlock();
+    private MaterialPropertyBlock propertyBlock;
     private Renderer[] renderers;
     private NetworkEntity networkEntity;
     private Animator animator;
@@ -25,6 +25,8 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
 
     private void Awake()
     {
+        // MaterialPropertyBlock 会创建原生 Unity 对象，不能在 MonoBehaviour 字段初始化器中构造。
+        propertyBlock = new MaterialPropertyBlock();
         baseScale = transform.localScale;
         animator = GetComponentInChildren<Animator>();
         CacheAnimatorParameters();
@@ -53,7 +55,7 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
         UpdateColor();
     }
 
-    public void PlayDamage(float amount)
+    public void PlayDamage(float amount, float interruptDuration = 0f)
     {
         if (dead || amount <= 0f)
         {
@@ -63,7 +65,10 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
         damageFlashUntil = Time.unscaledTime + 0.12f;
         SetColor(Color.white);
 
-        if (animator != null && hasHitTrigger)
+        ClientEnemyCombatView combatView = GetComponent<ClientEnemyCombatView>();
+        bool bossReaction = networkEntity != null && networkEntity.EntityType == NetworkEntityType.Boss;
+        bool shouldReact = (!bossReaction || interruptDuration > 0f) && (combatView == null || !combatView.IsAttackAnimationPlaying());
+        if (animator != null && hasHitTrigger && shouldReact)
         {
             animator.SetTrigger(HitHash);
         }
@@ -77,9 +82,9 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
         }
 
         dead = true;
+        GetComponent<ClientEnemyCombatView>()?.ResetPresentation();
         GetComponent<NetworkTransformInterpolator>()?.StopInterpolation();
         SetColor(new Color(0.15f, 0.15f, 0.15f, 1f));
-        transform.localScale = new Vector3(transform.localScale.x, transform.localScale.y * 0.35f, transform.localScale.z);
 
         if (animator != null && hasDeadBool)
         {
@@ -116,8 +121,8 @@ public sealed class NetworkEntityHealthView : MonoBehaviour
 
     private void UpdateColor()
     {
-        float healthRatio = MaxHealth > 0f ? CurrentHealth / MaxHealth : 0f;
-        SetColor(Color.Lerp(new Color(0.65f, 0.05f, 0.05f, 1f), new Color(0.9f, 0.3f, 0.1f, 1f), healthRatio));
+        if (renderers == null) return;
+        foreach (Renderer targetRenderer in renderers) targetRenderer.SetPropertyBlock(null);
     }
 
     private void SetColor(Color color)

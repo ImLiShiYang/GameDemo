@@ -8,6 +8,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
     private readonly Dictionary<int, ServerPlayer> players = new Dictionary<int, ServerPlayer>(2);
     private readonly SortedDictionary<int, int> pendingSpawns = new SortedDictionary<int, int>();
     private NetworkCharacterWorld characterWorld;
+    private uint preparedServerTick;
 
     private GameNetworkServer server;
     private ServerEntityRegistry entityRegistry;
@@ -20,6 +21,57 @@ public sealed class ServerPlayerManager : MonoBehaviour
     private bool scenePrepared;
 
     public int PlayerCount => players.Count;
+
+    public bool TryGetAlivePlayer(int entityId, out Transform target)
+    {
+        foreach (ServerPlayer player in players.Values)
+        {
+            if (player.EntityId != entityId || !IsAlive(player)) continue;
+            target = player.GameObject.transform;
+            return true;
+        }
+        target = null;
+        return false;
+    }
+
+    public void DamagePlayersInArea(GameObject source, Vector3 start, Vector3 end, float radius, float damage,
+        HashSet<int> hitTargets = null, PlayerHitKind hitKind = PlayerHitKind.Normal)
+    {
+        foreach (ServerPlayer player in players.Values)
+        {
+            if (!IsAlive(player) || (hitTargets != null && hitTargets.Contains(player.EntityId))) continue;
+            Vector3 position = player.GameObject.transform.position;
+            Vector3 segment = end - start;
+            Vector3 closest = start + segment * Mathf.Clamp01(Vector3.Dot(position - start, segment) / Mathf.Max(0.0001f, segment.sqrMagnitude));
+            if (Mathf.Abs(position.y - closest.y) > 2f) continue;
+            Vector3 delta = position - closest;
+            delta.y = 0f;
+            if (delta.sqrMagnitude > radius * radius || !ServerEntityRegistry.HasAttackSight(closest, position)) continue;
+            hitTargets?.Add(player.EntityId);
+            ApplyPlayerDamage(player.EntityId, new DamageInfo(damage, source, position, delta.normalized, Vector3.up), 0, hitKind);
+        }
+    }
+
+    public bool TryFindProjectileTarget(Vector3 start, Vector3 end, float radius, out int entityId, out Vector3 hitPoint, out float distance)
+    {
+        entityId = 0;
+        hitPoint = end;
+        distance = float.PositiveInfinity;
+        Vector3 segment = end - start;
+        foreach (ServerPlayer player in players.Values)
+        {
+            if (!IsAlive(player)) continue;
+            Vector3 center = player.GameObject.transform.position + Vector3.up;
+            float fraction = Mathf.Clamp01(Vector3.Dot(center - start, segment) / Mathf.Max(0.0001f, segment.sqrMagnitude));
+            Vector3 point = start + segment * fraction;
+            float hitDistance = segment.magnitude * fraction;
+            if ((center - point).sqrMagnitude > (radius + 0.5f) * (radius + 0.5f) || hitDistance >= distance) continue;
+            entityId = player.EntityId;
+            hitPoint = point;
+            distance = hitDistance;
+        }
+        return entityId != 0;
+    }
 
     public bool TryGetClosestAlivePlayer(Vector3 position, out Transform playerTransform, out int playerEntityId)
     {
@@ -176,6 +228,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
     public void PrepareTick(uint serverTick, List<int> movementOrder)
     {
         if (!scenePrepared) return;
+        preparedServerTick = serverTick;
         List<int> spawned = new List<int>();
         foreach (KeyValuePair<int, int> spawn in pendingSpawns)
             if (TrySpawnPlayer(spawn.Key, spawn.Value)) spawned.Add(spawn.Key);
@@ -259,15 +312,23 @@ public sealed class ServerPlayerManager : MonoBehaviour
         }
     }
 
-    private static void SimulatePlayer(ServerPlayer player, bool actionsAllowed)
+    private void SimulatePlayer(ServerPlayer player, bool actionsAllowed)
     {
         Vector3 position = player.Motor.State.Position;
         float rotationY = player.GameObject.transform.eulerAngles.y;
+        if (!IsAlive(player))
+        {
+            player.Action.RollTicks = 0;
+            player.Action.HitStunTicks = 0;
+            player.Action.MoveDirection = Vector2.zero;
+            player.GameObject.transform.SetPositionAndRotation(position, Quaternion.Euler(0f, rotationY, 0f));
+            return;
+        }
         Vector3 previousPosition = position;
         GrayboxPlayerController controller = player.GameObject.GetComponent<GrayboxPlayerController>();
         PlayerMovementSimulation.Step(ref position, ref rotationY, ref player.Action, player.MoveInput, player.AimInput, player.Buttons, actionsAllowed,
             controller != null ? controller.NetworkMoveSpeed : PlayerMovementSimulation.MoveSpeed,
-            controller != null ? controller.NetworkAcceleration : 18f);
+            controller != null ? controller.NetworkAcceleration : PlayerMovementSimulation.Acceleration, preparedServerTick);
         position = player.Motor.Step(position - previousPosition, PlayerMovementSimulation.TickDeltaTime).Position;
         player.GameObject.transform.SetPositionAndRotation(position, Quaternion.Euler(0f, rotationY, 0f));
     }
@@ -364,7 +425,7 @@ public sealed class ServerPlayerManager : MonoBehaviour
         else entityRegistry.ApplySkillDamage(player.EntityId, origin, caster.forward, config.Range, config.Damage, config.InterruptPower, true);
     }
 
-    public void ApplyPlayerDamage(int entityId, in DamageInfo damage)
+    public void ApplyPlayerDamage(int entityId, in DamageInfo damage, int sourceEntityId = 0, PlayerHitKind hitKind = PlayerHitKind.Normal)
     {
         if (!NetworkRuntime.IsServer || damage.Amount <= 0f) return;
         foreach (ServerPlayer player in players.Values)
@@ -378,13 +439,16 @@ public sealed class ServerPlayerManager : MonoBehaviour
             player.Motor.SetBlocking(!health.IsDead);
             if (applied > 0f)
             {
-                player.Action.RollTicks = 0;
-                player.Action.HitStunTicks = health.IsDead ? 0 : 8;
-                NetworkEntity source = damage.Source != null ? damage.Source.GetComponent<NetworkEntity>() : null;
+                Vector3 hitDirection = damage.HitDirection;
+                hitDirection.y = 0f;
+                PlayerHitKind resolvedHitKind = health.IsDead ? PlayerHitKind.Lethal :
+                    hitKind != PlayerHitKind.Normal ? hitKind : damage.InterruptPower > 0 ? PlayerHitKind.Heavy : PlayerHitKind.Normal;
+                PlayerMovementSimulation.ApplyHit(ref player.Action, new Vector2(hitDirection.x, hitDirection.z), resolvedHitKind);
+                NetworkEntity source = sourceEntityId == 0 && damage.Source != null ? damage.Source.GetComponent<NetworkEntity>() : null;
                 server.BroadcastBattleEvent(new BattleEventMessage
                 {
                     EventType = health.IsDead ? BattleEventType.EntityDied : BattleEventType.Damage,
-                    SourceEntityId = source != null ? source.EntityId : 0,
+                    SourceEntityId = sourceEntityId != 0 ? sourceEntityId : source != null ? source.EntityId : 0,
                     TargetEntityId = entityId,
                     Amount = applied,
                     CurrentHealth = health.CurrentHealth,

@@ -15,7 +15,7 @@ public readonly struct NetworkCharacterShape
     public static NetworkCharacterShape ForPrefab(int prefabId)
     {
         if (prefabId == NetworkPrefabCatalog.BossPrefabId) return new NetworkCharacterShape(0.9f, 4.4f);
-        if (prefabId == NetworkPrefabCatalog.TestEnemyPrefabId) return new NetworkCharacterShape(0.45f, 2.4f);
+        if (prefabId == NetworkPrefabCatalog.TestEnemyPrefabId || prefabId == NetworkPrefabCatalog.RangedEnemyPrefabId) return new NetworkCharacterShape(0.45f, 2.4f);
         return new NetworkCharacterShape(0.5f, 2f);
     }
 }

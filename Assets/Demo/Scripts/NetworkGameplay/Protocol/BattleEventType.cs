@@ -7,6 +7,8 @@ public enum BattleEventType : byte
     EntityDied = 2,
     PlayerFired = 3,
     PlayerSkillCast = 4,
+    EnemyAttackStarted = 5,
+    EnemyAttackStopped = 6,
     CountdownStarted = 10,
     WaveStarted = 11,
     WaveCleared = 12,

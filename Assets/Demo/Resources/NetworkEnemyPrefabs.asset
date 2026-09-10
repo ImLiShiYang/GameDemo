@@ -1,0 +1,18 @@
+%YAML 1.1
+%TAG !u! tag:yousandi.cn,2023:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a9cd21240c47c5d4a87c8b0e4efea2f9, type: 3}
+  m_Name: NetworkEnemyPrefabs
+  m_EditorClassIdentifier: 
+  Melee: {fileID: 8426712753709442929, guid: 29c28e45bc1754a4c8b0b1e519d3b096, type: 3}
+  Ranged: {fileID: 2399062492468556412, guid: 559de8e8f9a01f046a64cc4ea680c5ea, type: 3}
+  Boss: {fileID: 4305934042391235279, guid: 6c6e2cf969b94cc4a937b65c9961854a, type: 3}
+  Projectile: {fileID: 1595252117517162, guid: 0fe9ec42b616a244aa275e6432e5d2d1, type: 3}

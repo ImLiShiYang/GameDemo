@@ -29,6 +29,7 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
     public double ExtrapolatedSeconds => snapshots.ExtrapolatedSeconds;
 
     private Animator animator;
+    private PlayerPresentationDriver presentationDriver;
     private Vector3 targetPosition;
     private Quaternion targetRotation;
     private bool initialized;
@@ -42,6 +43,7 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
     {
         localAuthorityView = isLocalPlayer;
         animator = GetComponentInChildren<Animator>();
+        presentationDriver = GetComponent<PlayerPresentationDriver>();
         CacheAnimatorParameters();
         targetPosition = transform.position;
         targetRotation = transform.rotation;
@@ -66,7 +68,7 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
         ReceiveSnapshot(new InterpolationSnapshot
         {
             Tick = serverTick, Position = state.Position, Rotation = Quaternion.Euler(0f, state.RotationY, 0f),
-            MoveSpeed = state.AnimationState == 0 ? 0f : 1f,
+            MoveSpeed = new Vector2(state.Velocity.x, state.Velocity.z).magnitude,
             Velocity = state.Velocity,
             HasVelocity = true,
             Dead = state.CurrentHealth <= 0f
@@ -97,7 +99,7 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
             RenderSnapshot(frame);
         // 死亡优先于延迟播放，旧缓冲帧不能让角色重新播放翻滚/开火。
         if (frame.IsPlayer && latestDead)
-            GetComponent<GrayboxPlayerController>()?.ApplyNetworkMotion(default, false, true);
+            GetComponent<GrayboxPlayerController>()?.ApplyNetworkMotion(frame.Action, false, true);
     }
 
     private void RenderSnapshot(InterpolationSnapshot frame)
@@ -123,17 +125,24 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
         Vector3 correctedPosition = displayPosition + correctionOffset;
         if (correctionOffset.sqrMagnitude > 0.000001f)
             correctedPosition = ConstrainDisplayToWorld(displayPosition, correctedPosition);
-        transform.SetPositionAndRotation(correctedPosition, correctionRotation * frame.Rotation);
+        Quaternion correctedRotation = correctionRotation * frame.Rotation;
+        if (presentationDriver != null) presentationDriver.SetInterpolatedPose(correctedPosition, correctedRotation);
+        else transform.SetPositionAndRotation(correctedPosition, correctedRotation);
         ApplyAnimation(frame.MoveSpeed);
         if (frame.IsPlayer) GetComponent<GrayboxPlayerController>()?.ApplyNetworkMotion(frame.Action, frame.IsFiring && !latestDead, frame.Dead || latestDead);
     }
 
     public void ApplyPredictedState(Vector3 position, float rotationY, float moveSpeed)
     {
+        ApplyPredictedState(position, rotationY, moveSpeed, Vector3.zero);
+    }
+
+    public void ApplyPredictedState(Vector3 position, float rotationY, float moveSpeed, Vector3 velocity)
+    {
         ClearExtrapolationCorrection();
         snapshotPlayback = false;
         snapshots.Clear();
-        ApplyTransformState(position, rotationY, moveSpeed);
+        ApplyTransformState(position, rotationY, moveSpeed, velocity);
     }
 
     public void SnapTo(Vector3 position, float rotationY, float moveSpeed)
@@ -143,7 +152,8 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
         snapshots.Clear();
         targetPosition = position;
         targetRotation = Quaternion.Euler(0f, rotationY, 0f);
-        transform.SetPositionAndRotation(targetPosition, targetRotation);
+        if (presentationDriver != null) presentationDriver.SetPredictedPose(targetPosition, targetRotation, Vector3.zero, true);
+        else transform.SetPositionAndRotation(targetPosition, targetRotation);
         initialized = true;
         ApplyAnimation(moveSpeed);
     }
@@ -165,12 +175,17 @@ public sealed class NetworkTransformInterpolator : MonoBehaviour
         enabled = false;
     }
 
-    private void ApplyTransformState(Vector3 position, float rotationY, float moveSpeed)
+    private void ApplyTransformState(Vector3 position, float rotationY, float moveSpeed, Vector3 velocity)
     {
         targetPosition = position;
         targetRotation = Quaternion.Euler(0f, rotationY, 0f);
 
-        if (!initialized || localAuthorityView || Vector3.Distance(transform.position, targetPosition) > snapDistance)
+        bool hardSnap = !initialized || Vector3.Distance(transform.position, targetPosition) > snapDistance;
+        if (localAuthorityView && presentationDriver != null)
+        {
+            presentationDriver.SetPredictedPose(targetPosition, targetRotation, velocity, hardSnap);
+        }
+        else if (hardSnap || localAuthorityView)
         {
             transform.SetPositionAndRotation(targetPosition, targetRotation);
         }

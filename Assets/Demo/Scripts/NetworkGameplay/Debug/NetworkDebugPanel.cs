@@ -2,6 +2,7 @@ using UnityEngine;
 
 public sealed class NetworkDebugPanel : MonoBehaviour
 {
+    [SerializeField] private bool showMotionDetails;
     private GUIStyle style;
 
     private void OnGUI()
@@ -47,12 +48,22 @@ public sealed class NetworkDebugPanel : MonoBehaviour
             $"最近校正: {prediction?.LastCorrectionDistance ?? 0f:0.000}m / " +
             $"{prediction?.LastCorrectionAngle ?? 0f:0.0}°";
 
+        if (showMotionDetails)
+        {
+            PlayerPresentationDriver presentation = NetworkRuntime.IsClient && NetworkBootstrap.Instance?.ClientEntities?.LocalPlayerTransform != null
+                ? NetworkBootstrap.Instance.ClientEntities.LocalPlayerTransform.GetComponent<PlayerPresentationDriver>() : null;
+            PlayerActionState action = prediction?.Action ?? default;
+            text += $"\n表现误差: {presentation?.PositionError ?? 0f:0.000}m\n" +
+                $"Roll: #{action.RollSequence} tick={action.RollTicks} phase={action.RollNormalizedTime:0.00}\n" +
+                $"Hit: #{action.HitSequence} {action.HitKind} tick={action.HitStunTicks}";
+        }
+
         if (!string.IsNullOrEmpty(NetworkLog.LastError))
         {
             text += $"\n最后错误: {NetworkLog.LastError}";
         }
 
-        GUI.Box(new Rect(12f, 12f, 390f, 315f), text, style);
+        GUI.Box(new Rect(12f, 12f, 430f, 385f), text, style);
     }
 
     private static BattlePhase ResolveBattlePhase()

@@ -37,6 +37,15 @@ public class GrayboxCameraFollow : MonoBehaviour
 
     public bool IsFreeView => isFreeView;
 
+    public void SetTarget(Transform followTarget)
+    {
+        target = followTarget;
+        followVelocity = Vector3.zero;
+        if (target == null) return;
+        smoothedFocusPoint = GetTargetFocusPoint();
+        if (!isFreeView) ApplyStableFollowTransform();
+    }
+
     private void Awake()
     {
         if (playerController == null)

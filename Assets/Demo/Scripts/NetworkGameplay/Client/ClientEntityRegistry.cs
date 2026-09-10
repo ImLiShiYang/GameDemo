@@ -44,11 +44,11 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         localEntity.Configure(NetworkRuntime.LocalPlayerEntityId, NetworkEntityType.Player, NetworkPrefabCatalog.PlayerPrefabId,
             NetworkRuntime.LocalPlayerId, false);
         NetworkTransformInterpolator interpolator = playerTemplate.GetComponent<NetworkTransformInterpolator>() ?? playerTemplate.AddComponent<NetworkTransformInterpolator>();
-        interpolator.Initialize(false);
         playerTemplate.name = $"NetworkPlayer_Local_{NetworkRuntime.LocalPlayerId}";
         entities[localEntity.EntityId] = localEntity;
         localPlayerTransform = playerTemplate.transform;
         ConfigurePlayerView(playerTemplate, true);
+        interpolator.Initialize(true);
         client.SnapshotReceived += HandleSnapshot;
         client.EntitySpawnReceived += HandleEntitySpawn;
         client.EntityDespawnReceived += HandleEntityDespawn;
@@ -166,8 +166,8 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         NetworkEntity entity = playerObject.GetComponent<NetworkEntity>() ?? playerObject.AddComponent<NetworkEntity>();
         entity.Configure(state.EntityId, NetworkEntityType.Player, NetworkPrefabCatalog.PlayerPrefabId, state.OwnerPlayerId, false);
         NetworkTransformInterpolator interpolator = playerObject.GetComponent<NetworkTransformInterpolator>() ?? playerObject.AddComponent<NetworkTransformInterpolator>();
-        interpolator.Initialize(false);
         ConfigurePlayerView(playerObject, false);
+        interpolator.Initialize(false);
         entities.Add(state.EntityId, entity);
         NetworkLog.Info($"客户端创建远程玩家表现：Player {state.OwnerPlayerId}，EntityId {state.EntityId}。");
         return entity;
@@ -266,6 +266,9 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         entities.Add(message.EntityId, entity);
         if (message.EntityType == NetworkEntityType.Enemy || message.EntityType == NetworkEntityType.Boss)
         {
+            ClientEnemyCombatView combatView = entityObject.GetComponent<ClientEnemyCombatView>() ?? entityObject.AddComponent<ClientEnemyCombatView>();
+            combatView.enabled = true;
+            combatView.ResetPresentation();
             characterWorld.ApplyProxy(message.EntityId, message.PrefabId, message.Position, message.CurrentHealth > 0f);
             characterWorld.RefreshContext();
         }
@@ -315,6 +318,16 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private void HandleBattleEvent(BattleEventMessage message, uint serverTick)
     {
+        if (message.EventType == BattleEventType.EnemyAttackStarted || message.EventType == BattleEventType.EnemyAttackStopped)
+        {
+            if (entities.TryGetValue(message.SourceEntityId, out NetworkEntity attacker))
+            {
+                ClientEnemyCombatView combat = attacker.GetComponent<ClientEnemyCombatView>();
+                if (message.EventType == BattleEventType.EnemyAttackStarted) combat?.PlayAttack(message);
+                else combat?.FinishAttack();
+            }
+            return;
+        }
         if (message.EventType == BattleEventType.EntityDied) characterWorld.SetBlocking(message.TargetEntityId, false);
         if (message.EventType == BattleEventType.PlayerSkillCast)
         {
@@ -362,7 +375,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
         if (message.EventType == BattleEventType.Damage)
         {
-            healthView.PlayDamage(message.Amount);
+            healthView.PlayDamage(message.Amount, message.Duration);
             NetworkLog.Info($"客户端表现伤害：{message.SourceEntityId} -> {message.TargetEntityId}，{message.Amount}。");
         }
         else if (message.EventType == BattleEventType.EntityDied)
@@ -374,7 +387,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
 
     private IEnumerator ReleaseAfterDeath(GameObject entityObject)
     {
-        yield return new WaitForSecondsRealtime(0.35f);
+        yield return new WaitForSecondsRealtime(4.1f);
         prefabCatalog.Release(entityObject);
     }
 
@@ -384,7 +397,7 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         foreach (MonoBehaviour behaviour in playerObject.GetComponentsInChildren<MonoBehaviour>(true))
         {
             if (behaviour is NetworkEntity || behaviour is NetworkTransformInterpolator ||
-                behaviour is NetworkEntityHealthView || behaviour is ClientProjectileView)
+                behaviour is NetworkEntityHealthView || behaviour is ClientProjectileView || behaviour is ClientEnemyCombatView)
             {
                 continue;
             }
@@ -421,6 +434,9 @@ public sealed class ClientEntityRegistry : MonoBehaviour
     {
         GrayboxPlayerController controller = playerObject.GetComponent<GrayboxPlayerController>();
         controller.ConfigureNetworkView(local);
+        PlayerPresentationDriver presentation = playerObject.GetComponent<PlayerPresentationDriver>() ?? playerObject.AddComponent<PlayerPresentationDriver>();
+        presentation.enabled = true;
+        presentation.Initialize(local);
         if (!local)
         {
             foreach (Camera camera in playerObject.GetComponentsInChildren<Camera>(true)) camera.enabled = false;
@@ -428,7 +444,8 @@ public sealed class ClientEntityRegistry : MonoBehaviour
         }
         foreach (MonoBehaviour behaviour in playerObject.GetComponentsInChildren<MonoBehaviour>(true))
         {
-            if (behaviour is PlayerRootMotionRelay || behaviour is PlayerAnimationEvents || behaviour is PlayerShieldVisual ||
+            if (behaviour is PlayerAnimationEvents || behaviour is PlayerRootMotionRelay || behaviour is PlayerShieldVisual ||
+                behaviour is PlayerPresentationDriver ||
                 behaviour.GetType().Namespace == "UnityEngine.Animations.Rigging") behaviour.enabled = true;
         }
         foreach (AudioSource source in playerObject.GetComponentsInChildren<AudioSource>(true))
@@ -441,6 +458,8 @@ public sealed class ClientEntityRegistry : MonoBehaviour
             crosshair.ConfigureNetworkView(controller, local);
         if (local)
         {
+            foreach (GrayboxCameraFollow cameraFollow in FindObjectsOfType<GrayboxCameraFollow>(true))
+                cameraFollow.SetTarget(presentation.CameraAnchor);
             foreach (AimCrosshairView crosshair in FindObjectsOfType<AimCrosshairView>(true))
             {
                 if (!crosshair.transform.IsChildOf(playerObject.transform) && crosshair.gameObject.activeInHierarchy)

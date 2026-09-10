@@ -5,7 +5,7 @@ using UnityEngine;
 /// <summary>
 /// 服务器通用网络实体注册表。服务器唯一负责 EntityId 分配、Spawn、Despawn 和快照状态。
 /// </summary>
-public sealed class ServerEntityRegistry : MonoBehaviour
+public sealed partial class ServerEntityRegistry : MonoBehaviour
 {
     private const int FirstDynamicEntityId = 2001;
     private const float EnemyMoveSpeed = 1.6f;
@@ -273,11 +273,14 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         Vector3 previous = record.Motor.State.Position;
         record.Entity.transform.position = record.Motor.Step(record.Velocity * tickDeltaTime, tickDeltaTime).Position;
         record.Velocity = (record.Entity.transform.position - previous) / tickDeltaTime;
+        ResolveChargeContact(record, previous);
     }
 
     private void UpdateEnemyAI(ServerEntityRecord enemy, float tickDeltaTime)
     {
-        if (server.ServerTick < enemy.InterruptedUntilTick) { enemy.AnimationState = 2; return; }
+        if (server.ServerTick < enemy.InterruptedUntilTick) { CancelAttack(enemy); enemy.AnimationState = 2; return; }
+        if (server.GetComponent<ServerBattleFlow>() is ServerBattleFlow flow && !flow.AllowsPlayerActions) { CancelAttack(enemy); return; }
+        if (UpdateAttack(enemy, tickDeltaTime)) return;
         if (playerManager == null || !playerManager.TryGetClosestAlivePlayer(enemy.Entity.transform.position,
                 out Transform target, out int targetEntityId))
         {
@@ -296,7 +299,9 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         }
 
         bool isBoss = enemy.Entity.EntityType == NetworkEntityType.Boss;
-        float stoppingDistance = isBoss ? BossStoppingDistance : EnemyStoppingDistance;
+        bool ranged = enemy.Entity.PrefabId == NetworkPrefabCatalog.RangedEnemyPrefabId;
+        float stoppingDistance = isBoss ? 2.5f : ranged ? 7f : 1.8f;
+        if (TryStartAttack(enemy, target, direction.magnitude, isBoss, ranged)) return;
 
         if (direction.magnitude <= stoppingDistance)
         {
@@ -304,7 +309,7 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             return;
         }
 
-        float moveSpeed = isBoss ? BossMoveSpeed : EnemyMoveSpeed;
+        float moveSpeed = isBoss ? 3.5f : ranged ? 3f : 3.5f;
         enemy.Velocity = direction.normalized * moveSpeed;
         enemy.AnimationState = 1;
     }
@@ -328,7 +333,9 @@ public sealed class ServerEntityRegistry : MonoBehaviour
             Amount = damage,
             CurrentHealth = target.CurrentHealth,
             MaxHealth = target.MaxHealth,
-            Position = position
+            Position = position,
+            Duration = target.InterruptedUntilTick > server.ServerTick ?
+                (target.InterruptedUntilTick - server.ServerTick) * PlayerMovementSimulation.TickDeltaTime : 0f
         });
         NetworkLog.Info($"服务器伤害判定：Entity {sourceEntityId} -> {target.Entity.EntityId}，Damage {damage}，HP {target.CurrentHealth}/{target.MaxHealth}。");
 
@@ -394,5 +401,14 @@ public sealed class ServerEntityRegistry : MonoBehaviour
         public int TargetEntityId;
         public uint InterruptedUntilTick;
         public NetworkCharacterMotor Motor;
+        public byte Attack;
+        public int AttackPhase;
+        public float AttackTime;
+        public uint NextAttackTick;
+        public uint NextChargeTick;
+        public uint NextSlamTick;
+        public Vector3 AttackDirection;
+        public Vector3 AttackPosition;
+        public readonly HashSet<int> AttackHits = new HashSet<int>();
     }
 }

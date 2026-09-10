@@ -16,6 +16,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
     private Transform playerTransform;
     private NetworkTransformInterpolator presentation;
     private Vector3 predictedPosition;
+    private Vector3 predictedVelocity;
     private float predictedRotationY;
     private PlayerActionState predictedAction;
     private GrayboxPlayerController playerView;
@@ -43,6 +44,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         motor = characterWorld.Create(localEntityId > 0 ? localEntityId : NetworkRuntime.LocalPlayerEntityId,
             NetworkPrefabCatalog.PlayerPrefabId, localPlayerTransform.position, true);
         predictedPosition = playerTransform.position;
+        predictedVelocity = Vector3.zero;
         predictedRotationY = playerTransform.eulerAngles.y;
         initialized = true;
     }
@@ -69,7 +71,8 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         if (!hasBaseline || PendingInputCount >= InputBufferSize) return;
         Simulate(predictedInput);
         presentation.ApplyPredictedState(predictedPosition, predictedRotationY,
-            predictedInput.Move.magnitude * PlayerMovementSimulation.MoveSpeed);
+            predictedAction.MoveDirection.magnitude * (playerView != null ? playerView.NetworkMoveSpeed : PlayerMovementSimulation.MoveSpeed),
+            predictedVelocity);
         playerView?.ApplyNetworkMotion(predictedAction, firing, dead);
     }
 
@@ -102,6 +105,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
             lastAcknowledgedSequence = acknowledgedSequence;
             latestPredictedSequence = acknowledgedSequence;
             predictedPosition = serverState.Position;
+            predictedVelocity = Vector3.zero;
             predictedRotationY = serverState.RotationY;
             PendingInputCount = 0;
             LastCorrectionDistance = Vector3.Distance(playerTransform.position, predictedPosition);
@@ -114,6 +118,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         Vector3 previousPrediction = predictedPosition;
         float previousPredictedRotationY = predictedRotationY;
         predictedPosition = serverState.Position;
+        predictedVelocity = Vector3.zero;
         predictedRotationY = serverState.RotationY;
         if (acknowledgedSequence > lastAcknowledgedSequence)
         {
@@ -155,7 +160,7 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         }
         else if (LastCorrectionDistance >= IgnoreCorrectionDistance || LastCorrectionAngle >= IgnoreCorrectionAngle)
         {
-            presentation.ApplyPredictedState(predictedPosition, predictedRotationY, serverState.MoveSpeed);
+            presentation.ApplyPredictedState(predictedPosition, predictedRotationY, serverState.MoveSpeed, predictedVelocity);
         }
     }
 
@@ -186,9 +191,10 @@ public sealed class ClientPlayerPrediction : MonoBehaviour
         PlayerMovementSimulation.Step(ref predictedPosition, ref predictedRotationY, ref predictedAction,
             input.Move, input.Aim, input.Buttons, input.Enabled && !dead,
             playerView != null ? playerView.NetworkMoveSpeed : PlayerMovementSimulation.MoveSpeed,
-            playerView != null ? playerView.NetworkAcceleration : 18f);
+            playerView != null ? playerView.NetworkAcceleration : PlayerMovementSimulation.Acceleration, input.Sequence);
         using (characterWorld.UseContext(input.CollisionContext))
             predictedPosition = motor.Step(predictedPosition - previousPosition, PlayerMovementSimulation.TickDeltaTime).Position;
+        predictedVelocity = (predictedPosition - previousPosition) / PlayerMovementSimulation.TickDeltaTime;
         firing = input.Enabled && !dead && !predictedAction.IsRolling && predictedAction.HitStunTicks == 0 &&
             (input.Buttons & ClientInputButtons.Fire) != 0;
     }
